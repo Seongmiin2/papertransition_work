@@ -1,15 +1,20 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, createReadStream, existsSync, mkdirSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, delimiter, join, resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { BrowserWindow as BrowserWindowType, IpcMainInvokeEvent } from "electron";
 import { JobDatabase } from "./database.js";
 import type { JobRecord } from "../types/contracts.js";
 
-let window: BrowserWindow | null = null;
+let window: BrowserWindowType | null = null;
 let database: JobDatabase;
 const queue: string[] = [];
 const running = new Map<string, ChildProcessWithoutNullStreams>();
+
+function isTerminal(status: JobRecord["status"]): boolean {
+  return status === "COMPLETED" || status === "FAILED" || status === "CANCELLED";
+}
 
 async function sha256(path: string): Promise<string> {
   const hash = createHash("sha256");
@@ -18,6 +23,23 @@ async function sha256(path: string): Promise<string> {
 }
 
 function publish(job: JobRecord): JobRecord { window?.webContents.send("jobs:event", job); return job; }
+
+function workerFailureMessage(code: number | null, stderr: string): string {
+  const detail = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (stderr.includes("No module named 'scan2hwpx'")) {
+    return "변환 엔진을 찾지 못했습니다. 프로젝트 설치가 완료되었는지 확인하세요.";
+  }
+  if (stderr.includes("No module named 'paddleocr'")) {
+    return "로컬 OCR 엔진이 설치되지 않았습니다. 프로그램 설치를 완료한 뒤 다시 시도하세요.";
+  }
+  return detail
+    ? `변환 엔진이 종료되었습니다 (${code ?? "unknown"}): ${detail}`
+    : `변환 엔진이 종료되었습니다 (${code ?? "unknown"}).`;
+}
 
 async function processQueue(): Promise<void> {
   if (running.size || !queue.length) return;
@@ -32,20 +54,43 @@ async function processQueue(): Promise<void> {
     copyFileSync(job.sourcePath, staged);
     job = publish(database.transition(id, "PREPROCESSING", { progress: 0.08 }));
     job = publish(database.transition(id, "OCR", { progress: 0.1 }));
-    const projectRoot = resolve(".");
+    const projectRoot = app.getAppPath();
     const venvPython = join(projectRoot, ".venv", "Scripts", "python.exe");
-    const python = existsSync(venvPython) ? venvPython : "python";
-    const child = spawn(python, ["-m", "scan2hwpx.worker"], { cwd: projectRoot, stdio: ["pipe", "pipe", "pipe"] });
+    if (!existsSync(venvPython)) {
+      throw new Error("변환 엔진이 준비되지 않았습니다. .venv\\Scripts\\python.exe를 찾지 못했습니다.");
+    }
+    const workerPath = join(projectRoot, "src");
+    const workerEnv = {
+      ...process.env,
+      PYTHONPATH: [workerPath, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
+      PYTHONUTF8: "1"
+    };
+    let workerStderr = "";
+    const child = spawn(venvPython, ["-m", "scan2hwpx.worker"], {
+      cwd: projectRoot,
+      env: workerEnv,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
     running.set(id, child);
-    child.stderr.on("data", (data) => database.event(id, "worker_stderr", { message: String(data).slice(-4000) }));
+    child.stderr.on("data", (data) => {
+      workerStderr = `${workerStderr}${String(data)}`.slice(-4000);
+      database.event(id, "worker_stderr", { message: workerStderr });
+    });
     let buffer = "";
     child.stdout.on("data", (data) => {
       buffer += String(data);
       const lines = buffer.split("\n"); buffer = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        const event = JSON.parse(line) as { event: string; data: Record<string, unknown> };
+        let event: { event: string; data: Record<string, unknown> };
+        try {
+          event = JSON.parse(line) as { event: string; data: Record<string, unknown> };
+        } catch {
+          database.event(id, "worker_stdout", { message: line.slice(-4000) });
+          continue;
+        }
         database.event(id, event.event, event.data);
+        if (isTerminal(database.get(id).status)) continue;
         if (event.event === "progress") publish(database.setProgress(id, Math.min(0.84, database.get(id).progress + 0.01)));
         if (event.event === "completed") {
           publish(database.transition(id, "STRUCTURING", { progress: 0.86 }));
@@ -56,9 +101,18 @@ async function processQueue(): Promise<void> {
         if (event.event === "failed") publish(database.transition(id, "FAILED", { errorMessage: String(event.data.message) }));
       }
     });
+    child.on("error", (error) => {
+      running.delete(id);
+      if (!isTerminal(database.get(id).status)) {
+        publish(database.transition(id, "FAILED", { errorMessage: `변환 엔진을 시작하지 못했습니다: ${error.message}` }));
+      }
+      void processQueue();
+    });
     child.on("close", (code) => {
       running.delete(id);
-      if (code && database.get(id).status !== "FAILED") publish(database.transition(id, "FAILED", { errorMessage: `worker exited ${code}` }));
+      if (!isTerminal(database.get(id).status)) {
+        publish(database.transition(id, "FAILED", { errorMessage: workerFailureMessage(code, workerStderr) }));
+      }
       void processQueue();
     });
     child.stdin.write(JSON.stringify({ protocol_version: "1.0", request_id: randomUUID(), method: "convert", params: { job_id: id, input_pdf: staged, work_dir: root, options: { remove_red_marks: true, ocr_provider: "local", layout: "exam_auto" } } }) + "\n");
@@ -71,9 +125,9 @@ async function processQueue(): Promise<void> {
 
 function createWindow(): void {
   window = new BrowserWindow({ width: 1440, height: 900, minWidth: 1180, minHeight: 720,
-    webPreferences: { preload: join(import.meta.dirname, "../preload/index.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+    webPreferences: { preload: join(__dirname, "../preload/index.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   const dev = process.env.VITE_DEV_SERVER_URL;
-  if (dev) void window.loadURL(dev); else void window.loadFile(join(import.meta.dirname, "../../dist-renderer/index.html"));
+  if (dev) void window.loadURL(dev); else void window.loadFile(join(__dirname, "../../dist-renderer/index.html"));
 }
 
 app.whenReady().then(() => {
@@ -92,14 +146,14 @@ app.whenReady().then(() => {
     }
     void processQueue(); return jobs;
   });
-  ipcMain.handle("jobs:cancel", (_event, id: string) => {
+  ipcMain.handle("jobs:cancel", (_event: IpcMainInvokeEvent, id: string) => {
     const queuedIndex = queue.indexOf(id);
     if (queuedIndex >= 0) queue.splice(queuedIndex, 1);
-    running.get(id)?.kill();
     const current = database.get(id);
-    if (current.status !== "CANCELLED") publish(database.transition(id, "CANCELLED"));
+    if (!isTerminal(current.status)) publish(database.transition(id, "CANCELLED"));
+    running.get(id)?.kill();
   });
-  ipcMain.handle("files:open", async (_event, path: string) => { const error = await shell.openPath(path); if (error) throw new Error(error); });
+  ipcMain.handle("files:open", async (_event: IpcMainInvokeEvent, path: string) => { const error = await shell.openPath(path); if (error) throw new Error(error); });
   createWindow();
   void processQueue();
 });

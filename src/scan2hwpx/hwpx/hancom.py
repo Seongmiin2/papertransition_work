@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +14,6 @@ def render_with_hancom(document: Document, output: Path) -> None:
     except ImportError as exc:
         raise RuntimeError("pyhwpx가 설치되지 않았습니다.") from exc
     output.parent.mkdir(parents=True, exist_ok=True)
-    raw_output = output.with_name(f".{output.stem}.raw{output.suffix}")
     hwp: Any = Hwp(new=True, visible=False)
     try:
         coldef = hwp.HParameterSet.HColDef
@@ -36,23 +34,10 @@ def render_with_hancom(document: Document, output: Path) -> None:
             _insert_blocks(hwp, right)
             if page_index < len(document.pages) - 1:
                 hwp.BreakPage()
-        if not hwp.save_as(str(raw_output.resolve()), format="HWPX"):
+        if not hwp.save_as(str(output.resolve()), format="HWPX"):
             raise RuntimeError("한글에서 HWPX 저장에 실패했습니다.")
     finally:
         hwp.quit()
-    normalizer: Any = Hwp(new=True, visible=False)
-    try:
-        if not normalizer.open(str(raw_output.resolve())):
-            raise RuntimeError("한글에서 초기 HWPX 재개방에 실패했습니다.")
-        if not normalizer.save_as(str(output.resolve()), format="HWPX"):
-            raise RuntimeError("한글에서 최종 HWPX 정규화 저장에 실패했습니다.")
-    finally:
-        normalizer.quit()
-        time.sleep(0.5)
-        try:
-            raw_output.unlink(missing_ok=True)
-        except PermissionError:
-            pass
 
 
 def verify_with_hancom(path: Path, expected_text: str) -> tuple[bool, int]:
@@ -71,7 +56,6 @@ def render_clean_with_hancom(document: Document, output: Path) -> None:
     from pyhwpx import Hwp
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    raw_output = output.with_name(f".{output.stem}.raw{output.suffix}")
     items = build_clean_items(document)
     hwp: Any = Hwp(new=True, visible=False)
     try:
@@ -87,23 +71,10 @@ def render_clean_with_hancom(document: Document, output: Path) -> None:
                 hwp.BreakColumn()
                 current_column = item.column
             _insert_clean_item(hwp, item)
-        if not hwp.save_as(str(raw_output.resolve()), format="HWPX"):
-            raise RuntimeError("정리된 HWPX 초기 저장에 실패했습니다.")
+        if not hwp.save_as(str(output.resolve()), format="HWPX"):
+            raise RuntimeError("정리된 HWPX 저장에 실패했습니다.")
     finally:
         hwp.quit()
-    normalizer: Any = Hwp(new=True, visible=False)
-    try:
-        if not normalizer.open(str(raw_output.resolve())):
-            raise RuntimeError("정리된 HWPX 재개방에 실패했습니다.")
-        if not normalizer.save_as(str(output.resolve()), format="HWPX"):
-            raise RuntimeError("정리된 HWPX 최종 저장에 실패했습니다.")
-    finally:
-        normalizer.quit()
-        time.sleep(0.5)
-        try:
-            raw_output.unlink(missing_ok=True)
-        except PermissionError:
-            pass
 
 
 def _set_two_columns(hwp: Any) -> None:

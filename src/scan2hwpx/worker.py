@@ -9,8 +9,6 @@ import uuid
 from pathlib import Path
 from typing import Any, TextIO
 
-from scan2hwpx.pipeline import convert_pdf
-
 PROTOCOL_VERSION = "1.0"
 
 
@@ -32,6 +30,8 @@ def handle(request: dict[str, Any]) -> None:
         raise ValueError("unsupported protocol_version")
     if request.get("method") != "convert":
         raise ValueError("unsupported method")
+    from scan2hwpx.pipeline import convert_pdf
+
     params = request["params"]
     source = Path(params["input_pdf"]).resolve(strict=True)
     work_dir = Path(params["work_dir"]).resolve()

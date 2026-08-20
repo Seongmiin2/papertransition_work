@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 
 from scan2hwpx.hwpx import render_hwpx, validate_hwpx
-from scan2hwpx.ocr.providers import FixtureOcrProvider, PaddlePdfOcrProvider
+from scan2hwpx.ocr.providers import FixtureOcrProvider
+from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
 from scan2hwpx.pipeline import convert_pdf, inspect_pdf
 
 

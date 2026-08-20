@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import type { Exam2HwpxApi, JobRecord } from "../types/contracts.js";
 
 const api: Exam2HwpxApi = {
@@ -9,7 +9,7 @@ const api: Exam2HwpxApi = {
   cancel: (jobId) => ipcRenderer.invoke("jobs:cancel", jobId),
   openPath: (path) => ipcRenderer.invoke("files:open", path),
   onJobEvent: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, job: JobRecord) => callback(job);
+    const listener = (_event: IpcRendererEvent, job: JobRecord) => callback(job);
     ipcRenderer.on("jobs:event", listener);
     return () => ipcRenderer.removeListener("jobs:event", listener);
   }

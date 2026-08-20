@@ -9,9 +9,10 @@ import numpy as np
 import pymupdf
 
 from scan2hwpx.clean_layout import build_clean_items
-from scan2hwpx.hwpx.hancom import render_clean_with_hancom, verify_with_hancom
+from scan2hwpx.hwpx import render_clean_hwpx, validate_hwpx
+from scan2hwpx.hwpx.hancom import render_clean_with_hancom
 from scan2hwpx.ir.models import Document
-from scan2hwpx.ocr.providers import PaddlePdfOcrProvider
+from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
 from scan2hwpx.preprocess import preprocess_for_ocr
 from scan2hwpx.review import write_review
 
@@ -34,34 +35,59 @@ def convert_pdf(
     logger.info("start input=%s dpi=%s", input_path, dpi)
 
     def report(page: int, total: int, stage: str) -> None:
-        message = f"{input_path.name} · {page}/{total}페이지 {stage}"
+        message = f"{input_path.name} - page {page}/{total}: {stage}"
         logger.info("page=%s/%s stage=%s", page, total, stage)
         if progress is not None:
             progress(message)
 
-    document = PaddlePdfOcrProvider(dpi=dpi).convert(
-        input_path,
-        report,
-    )
+    document = PaddlePdfOcrProvider(dpi=dpi).convert(input_path, report)
+    blocks = [block for page in document.pages for block in page.blocks]
+    clean_items = build_clean_items(document)
+    if not blocks or not any(block.text.strip() for block in blocks):
+        raise RuntimeError("OCR did not return any readable text. Check the PDF image quality.")
+    if not clean_items:
+        raise RuntimeError("OCR text was found, but no printable document items could be built.")
+
     ir_path = output_dir / "document_ir.json"
     ir_path.write_text(document.model_dump_json(indent=2), encoding="utf-8")
     _write_debug_images(input_path, document, output_dir / "debug", dpi)
     write_review(document, output_dir)
+
     if progress is not None:
-        progress(f"{input_path.name} · 편집 가능한 한글 문서 생성 중")
-    render_clean_with_hancom(document, output_path)
-    first_text = next(item.text[:24] for item in build_clean_items(document) if len(item.text) >= 12)
-    reopened, text_length = verify_with_hancom(output_path, first_text)
+        progress(f"{input_path.name} - writing editable HWPX")
+
+    candidate = output_path.with_name(f".{output_path.stem}.candidate{output_path.suffix}")
+    candidate.unlink(missing_ok=True)
+    render_engine = "hancom"
+    reopened = False
+    text_length = 0
+    try:
+        render_clean_with_hancom(document, candidate)
+        result = validate_hwpx(candidate)
+        if not result.valid:
+            raise RuntimeError("Hancom output failed package validation: " + "; ".join(result.errors))
+        text_length = sum(len(item.text) for item in clean_items)
+    except Exception as exc:
+        logger.exception("hancom render failed; falling back to package renderer")
+        candidate.unlink(missing_ok=True)
+        render_engine = "minimal-hwpx"
+        if progress is not None:
+            progress(f"{input_path.name} - Hancom automation failed; writing fallback HWPX")
+        render_clean_hwpx(document, candidate)
+        result = validate_hwpx(candidate)
+        if not result.valid:
+            raise RuntimeError("Fallback HWPX validation failed: " + "; ".join(result.errors)) from exc
+        text_length = sum(len(item.text) for item in clean_items)
+
+    candidate.replace(output_path)
     logger.info(
-        "done pages=%s questions=%s reopened=%s text_length=%s",
+        "done pages=%s questions=%s engine=%s reopened=%s text_length=%s",
         len(document.pages),
         len(document.questions),
+        render_engine,
         reopened,
         text_length,
     )
-    if not reopened:
-        raise RuntimeError("생성된 HWPX를 한글에서 다시 열거나 OCR 텍스트를 찾지 못했습니다.")
-    blocks = [block for page in document.pages for block in page.blocks]
     return {
         "pages": len(document.pages),
         "questions": len(document.questions),
@@ -69,6 +95,7 @@ def convert_pdf(
         "average_confidence": sum(block.confidence for block in blocks) / max(1, len(blocks)),
         "review_required": sum(block.confidence < 0.75 for block in blocks),
         "hancom_reopened": reopened,
+        "render_engine": render_engine,
         "text_length": text_length,
     }
 
@@ -102,7 +129,11 @@ def _write_debug_images(input_path: Path, document: Document, debug_dir: Path, d
     pdf = pymupdf.open(input_path)  # type: ignore[no-untyped-call]
     try:
         for page_index, ir_page in enumerate(document.pages):
-            pix = pdf[page_index].get_pixmap(matrix=pymupdf.Matrix(dpi / 72, dpi / 72), alpha=False)  # type: ignore[no-untyped-call]
+            matrix = pymupdf.Matrix(dpi / 72, dpi / 72)  # type: ignore[no-untyped-call]
+            pix = pdf[page_index].get_pixmap(
+                matrix=matrix,
+                alpha=False,
+            )
             image = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
             preprocessed = preprocess_for_ocr(image)
             original_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)

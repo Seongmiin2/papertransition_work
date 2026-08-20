@@ -11,3 +11,4 @@ def test_clean_layout_keeps_question_and_drops_no_content_fixture() -> None:
     text = "\n".join(item.text for item in items)
     assert "1. 다음 글의 내용" in text
     assert "① 첫 번째 선택지" in text
+    assert "채점 표시" not in text

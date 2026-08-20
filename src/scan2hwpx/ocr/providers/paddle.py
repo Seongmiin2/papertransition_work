@@ -7,10 +7,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pymupdf
-from paddleocr import PaddleOCR  # type: ignore[import-untyped]
-
 from scan2hwpx.exam_parser import parse_questions
 from scan2hwpx.ir.models import (
     AnnotationState,
@@ -23,10 +19,6 @@ from scan2hwpx.ir.models import (
     PageQuality,
     QAReport,
 )
-from scan2hwpx.preprocess import preprocess_for_ocr
-
-if os.name == "nt":
-    from scan2hwpx.ocr.providers.windows import recognize_windows_image
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -43,6 +35,8 @@ class PaddlePdfOcrProvider:
 
     def _engine(self) -> Any:
         if self._ocr is None:
+            from paddleocr import PaddleOCR  # type: ignore[import-untyped]
+
             self._ocr = PaddleOCR(
                 lang="korean",
                 text_detection_model_name="PP-OCRv5_mobile_det",
@@ -55,6 +49,11 @@ class PaddlePdfOcrProvider:
         return self._ocr
 
     def convert(self, path: Path, progress: ProgressCallback | None = None) -> Document:
+        import numpy as np
+        import pymupdf
+
+        from scan2hwpx.preprocess import preprocess_for_ocr
+
         raw_hash = hashlib.sha256(path.read_bytes()).hexdigest()
         try:
             pdf = pymupdf.open(path)  # type: ignore[no-untyped-call]
@@ -93,6 +92,8 @@ class PaddlePdfOcrProvider:
                 data = payload.get("res", payload) if isinstance(payload, dict) else {}
                 if os.name == "nt":
                     try:
+                        from scan2hwpx.ocr.providers.windows import recognize_windows_image
+
                         windows_lines = recognize_windows_image(preprocessed.image)
                     except (ImportError, OSError, RuntimeError, ValueError):
                         windows_lines = []
@@ -147,9 +148,7 @@ class PaddlePdfOcrProvider:
         for text, score, polygon in zip(texts, scores, polygons, strict=False):
             if not str(text).strip():
                 continue
-            points = np.asarray(polygon, dtype=float)
-            x0, y0 = float(points[:, 0].min()), float(points[:, 1].min())
-            x1, y1 = float(points[:, 0].max()), float(points[:, 1].max())
+            x0, y0, x1, y1 = _polygon_bounds(polygon)
             raw.append(((x0, y0, x1, y1), str(text).strip(), float(score)))
         ordered = sorted(raw, key=lambda item: self._reading_key(item[0], width, height))
         blocks: list[Block] = []
@@ -193,9 +192,7 @@ class PaddlePdfOcrProvider:
         polygons = list(paddle.get("rec_polys", paddle.get("dt_polys", [])))
         fused = texts.copy()
         for index, (paddle_text, polygon) in enumerate(zip(texts, polygons, strict=False)):
-            points = np.asarray(polygon, dtype=float)
-            px0, py0 = float(points[:, 0].min()), float(points[:, 1].min())
-            px1, py1 = float(points[:, 0].max()), float(points[:, 1].max())
+            px0, py0, px1, py1 = _polygon_bounds(polygon)
             best: tuple[float, str] | None = None
             for (wx0, wy0, wx1, wy1), windows_text, _ in windows:
                 vertical = max(0.0, min(py1, wy1) - max(py0, wy0)) / max(1.0, py1 - py0)
@@ -241,3 +238,10 @@ class PaddlePdfOcrProvider:
         if "<보기>" in text or "<자료>" in text:
             return BlockKind.BOX
         return BlockKind.UNKNOWN
+
+
+def _polygon_bounds(polygon: Any) -> tuple[float, float, float, float]:
+    points = [(float(point[0]), float(point[1])) for point in polygon]
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return min(xs), min(ys), max(xs), max(ys)

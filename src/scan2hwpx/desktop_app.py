@@ -13,11 +13,14 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
-from tkinterdnd2 import DND_FILES, TkinterDnD  # type: ignore[import-untyped]
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD  # type: ignore[import-untyped]
+except ImportError:
+    DND_FILES = "DND_Files"
+    TkinterDnD = None
 
 from scan2hwpx.hwpx import render_hwpx, validate_hwpx
 from scan2hwpx.ocr.providers import FixtureOcrProvider
-from scan2hwpx.pipeline import convert_pdf
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,8 @@ class BatchConverter:
 
     def convert_one(self, source: Path, progress: Callable[[str], None] | None = None) -> Path:
         if source.suffix.lower() == ".pdf":
+            from scan2hwpx.pipeline import convert_pdf
+
             job_dir = self.store.create_job_directory(source.stem)
             target = job_dir / "result.hwpx"
             try:
@@ -154,7 +159,7 @@ class BatchConverter:
         return completed, failed
 
 
-class DesktopApp(TkinterDnD.Tk):  # type: ignore[misc]
+class DesktopApp(TkinterDnD.Tk if TkinterDnD is not None else tk.Tk):  # type: ignore[misc]
     def __init__(self, workspace: Path | None = None) -> None:
         super().__init__()
         self.workspace = (workspace or Path.cwd()).resolve()
@@ -210,8 +215,9 @@ class DesktopApp(TkinterDnD.Tk):  # type: ignore[misc]
             drop_frame, height=8, selectmode=tk.EXTENDED, borderwidth=0, highlightthickness=0
         )
         self.file_list.grid(row=0, column=0, sticky="nsew")
-        self.drop_target_register(DND_FILES)
-        self.dnd_bind("<<Drop>>", self._on_drop)
+        if TkinterDnD is not None:
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<Drop>>", self._on_drop)
         ttk.Label(outer, text="작업 내용", style="Section.TLabel").grid(
             row=4, column=0, sticky="w", pady=(12, 4)
         )

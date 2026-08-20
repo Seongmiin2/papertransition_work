@@ -1,82 +1,92 @@
-import Database from "better-sqlite3";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { JobRecord, JobState } from "../types/contracts.js";
 import { assertTransition } from "./state-machine.js";
 
+interface StoreFile {
+  jobs: JobRecord[];
+  events: Array<{ jobId: string; event: string; payload: unknown; createdAt: string }>;
+}
+
 export class JobDatabase {
-  private readonly db: Database.Database;
+  private readonly path: string;
+  private store: StoreFile;
 
   constructor(path: string) {
-    this.db = new Database(path);
-    this.db.pragma("journal_mode = WAL");
-    this.db.exec(`CREATE TABLE IF NOT EXISTS jobs (
-      id TEXT PRIMARY KEY, source_path TEXT NOT NULL, source_name TEXT NOT NULL,
-      source_sha256 TEXT NOT NULL, status TEXT NOT NULL, stage TEXT NOT NULL,
-      progress REAL NOT NULL DEFAULT 0, page_count INTEGER, output_path TEXT,
-      error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    ); CREATE TABLE IF NOT EXISTS job_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, event TEXT NOT NULL,
-      payload_json TEXT NOT NULL, created_at TEXT NOT NULL
-    );`);
+    this.path = path.replace(/\.sqlite$/i, ".json");
+    mkdirSync(dirname(this.path), { recursive: true });
+    this.store = this.load();
   }
 
   insert(job: JobRecord): void {
-    this.db.prepare(`INSERT INTO jobs VALUES
-      (@id,@sourcePath,@sourceName,@sourceSha256,@status,@stage,@progress,@pageCount,@outputPath,@errorMessage,@createdAt,@updatedAt)`)
-      .run(job);
+    if (this.store.jobs.some((item) => item.id === job.id)) throw new Error(`Duplicate job: ${job.id}`);
+    this.store.jobs.push(job);
+    this.save();
   }
 
   list(): JobRecord[] {
-    return this.db.prepare("SELECT * FROM jobs ORDER BY created_at DESC").all().map(mapRow);
+    return [...this.store.jobs].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
   get(id: string): JobRecord {
-    const row = this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(id);
-    if (!row) throw new Error(`Unknown job: ${id}`);
-    return mapRow(row);
+    const job = this.store.jobs.find((item) => item.id === id);
+    if (!job) throw new Error(`Unknown job: ${id}`);
+    return job;
   }
 
   recoverInterrupted(): string[] {
-    const active = this.db.prepare("SELECT id FROM jobs WHERE status NOT IN ('COMPLETED','FAILED','CANCELLED','QUEUED')").all() as Array<{ id: string }>;
     const now = new Date().toISOString();
-    const update = this.db.prepare("UPDATE jobs SET status='RETRYING', stage='RETRYING', updated_at=? WHERE id=?");
-    for (const row of active) {
-      update.run(now, row.id);
-      this.event(row.id, "recovered", {});
+    for (const job of this.store.jobs) {
+      if (!["COMPLETED", "FAILED", "CANCELLED", "QUEUED"].includes(job.status)) {
+        job.status = "RETRYING";
+        job.stage = "RETRYING";
+        job.updatedAt = now;
+        this.event(job.id, "recovered", {});
+      }
     }
-    const queued = this.db.prepare("SELECT id FROM jobs WHERE status IN ('QUEUED','RETRYING') ORDER BY created_at").all() as Array<{ id: string }>;
-    return queued.map((row) => row.id);
+    this.save();
+    return this.store.jobs
+      .filter((job) => job.status === "QUEUED" || job.status === "RETRYING")
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((job) => job.id);
   }
 
   setProgress(id: string, progress: number): JobRecord {
-    this.db.prepare("UPDATE jobs SET progress=?, updated_at=? WHERE id=?").run(progress, new Date().toISOString(), id);
-    return this.get(id);
+    const job = this.get(id);
+    job.progress = progress;
+    job.updatedAt = new Date().toISOString();
+    this.save();
+    return job;
   }
 
   transition(id: string, status: JobState, patch: Partial<JobRecord> = {}): JobRecord {
     const current = this.get(id);
     assertTransition(current.status, status);
-    const next = { ...current, ...patch, status, stage: status, updatedAt: new Date().toISOString() };
-    this.db.prepare(`UPDATE jobs SET status=@status, stage=@stage, progress=@progress,
-      page_count=@pageCount, output_path=@outputPath, error_message=@errorMessage,
-      updated_at=@updatedAt WHERE id=@id`).run(next);
+    const next: JobRecord = { ...current, ...patch, status, stage: status, updatedAt: new Date().toISOString() };
+    this.store.jobs = this.store.jobs.map((job) => (job.id === id ? next : job));
     this.event(id, "transition", { from: current.status, to: status });
+    this.save();
     return next;
   }
 
   event(jobId: string, event: string, payload: unknown): void {
-    this.db.prepare("INSERT INTO job_events(job_id,event,payload_json,created_at) VALUES(?,?,?,?)")
-      .run(jobId, event, JSON.stringify(payload), new Date().toISOString());
+    this.store.events.push({ jobId, event, payload, createdAt: new Date().toISOString() });
+    this.store.events = this.store.events.slice(-1000);
+    this.save();
   }
-}
 
-function mapRow(value: unknown): JobRecord {
-  const row = value as Record<string, unknown>;
-  return {
-    id: String(row.id), sourcePath: String(row.source_path), sourceName: String(row.source_name),
-    sourceSha256: String(row.source_sha256), status: row.status as JobState, stage: row.stage as JobState,
-    progress: Number(row.progress), pageCount: row.page_count === null ? null : Number(row.page_count),
-    outputPath: row.output_path === null ? null : String(row.output_path),
-    errorMessage: row.error_message === null ? null : String(row.error_message),
-    createdAt: String(row.created_at), updatedAt: String(row.updated_at)
-  };
+  private load(): StoreFile {
+    if (!existsSync(this.path)) return { jobs: [], events: [] };
+    const parsed = JSON.parse(readFileSync(this.path, "utf8")) as Partial<StoreFile>;
+    return {
+      jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
+      events: Array.isArray(parsed.events) ? parsed.events : [],
+    };
+  }
+
+  private save(): void {
+    const tempPath = `${this.path}.${process.pid}.tmp`;
+    writeFileSync(tempPath, JSON.stringify(this.store, null, 2), "utf8");
+    renameSync(tempPath, this.path);
+  }
 }

@@ -2,26 +2,23 @@
   "name": "exam2hwpx",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "main": "dist-electron/main/main.js",
   "scripts": {
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "start": "electron ."
+    "start": "npm run build && node scripts/start-electron.cjs"
   },
   "dependencies": {
-    "better-sqlite3": "latest",
     "react": "latest",
     "react-dom": "latest",
     "zustand": "latest"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
-    "electron": "latest",
+    "electron": "^43.4.1",
     "typescript": "latest",
     "vite": "latest",
     "vitest": "latest"

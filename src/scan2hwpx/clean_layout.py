@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-from scan2hwpx.ir.models import Block, BlockKind, Document
+from scan2hwpx.ir.models import AnnotationState, Block, BlockKind, Document
 
 
 class CleanKind(StrEnum):
@@ -90,6 +90,8 @@ def build_clean_items(document: Document) -> list[CleanItem]:
 
 def _drop(block: Block, page_no: int) -> bool:
     text = block.text.strip()
+    if block.annotation_state != AnnotationState.PRINTED:
+        return True
     if block.kind in {BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER}:
         return True
     if text in {"×", "X", "○", "O", "(X)", "(0)", "(O)"}:
