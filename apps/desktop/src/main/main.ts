@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, mkdirSync, copyFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { JobDatabase } from "./database.js";
@@ -32,7 +32,10 @@ async function processQueue(): Promise<void> {
     copyFileSync(job.sourcePath, staged);
     job = publish(database.transition(id, "PREPROCESSING", { progress: 0.08 }));
     job = publish(database.transition(id, "OCR", { progress: 0.1 }));
-    const child = spawn("python", ["-m", "scan2hwpx.worker"], { cwd: resolve("."), stdio: ["pipe", "pipe", "pipe"] });
+    const projectRoot = resolve(".");
+    const venvPython = join(projectRoot, ".venv", "Scripts", "python.exe");
+    const python = existsSync(venvPython) ? venvPython : "python";
+    const child = spawn(python, ["-m", "scan2hwpx.worker"], { cwd: projectRoot, stdio: ["pipe", "pipe", "pipe"] });
     running.set(id, child);
     child.stderr.on("data", (data) => database.event(id, "worker_stderr", { message: String(data).slice(-4000) }));
     let buffer = "";
