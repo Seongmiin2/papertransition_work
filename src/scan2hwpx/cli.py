@@ -8,6 +8,12 @@ from scan2hwpx.hwpx import render_hwpx, validate_hwpx
 from scan2hwpx.ocr.providers import FixtureOcrProvider
 from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
 from scan2hwpx.pipeline import convert_pdf, inspect_pdf
+from scan2hwpx.vision.paddle_formula import PaddleFormulaProcessor
+from scan2hwpx.vision.training_data import (
+    load_verified_formula_samples,
+    split_by_document,
+    write_training_splits,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -25,11 +31,15 @@ def _parser() -> argparse.ArgumentParser:
     convert.add_argument("--remove-red-marks", action="store_true")
     convert.add_argument("--layout", default="exam-two-column", choices=["exam-two-column"])
     convert.add_argument("--dpi", type=int, default=300)
+    convert.add_argument("--formulas", action="store_true")
     validate = commands.add_parser("validate")
     validate.add_argument("input", type=Path)
     export = commands.add_parser("export-ir")
     export.add_argument("input", type=Path)
     export.add_argument("--out", type=Path, required=True)
+    audit = commands.add_parser("formula-audit")
+    audit.add_argument("manifest", type=Path)
+    audit.add_argument("--split-out", type=Path)
     return parser
 
 
@@ -44,11 +54,23 @@ def main() -> int:
             print(f"ERROR: {error}")
         print("valid" if result.valid else "invalid")
         return 0 if result.valid else 1
+    if args.command == "formula-audit":
+        samples, audit = load_verified_formula_samples(args.manifest)
+        if args.split_out is not None and samples:
+            write_training_splits(split_by_document(samples), args.split_out)
+        print(json.dumps(audit.__dict__, ensure_ascii=False, indent=2))
+        return 0 if audit.trainable else 2
     use_pdf = (
         args.input.suffix.lower() == ".pdf" or getattr(args, "provider", "auto") == "paddleocr"
     )
     if args.command == "convert" and use_pdf:
-        summary = convert_pdf(args.input, args.out, dpi=args.dpi)
+        formula_processor = PaddleFormulaProcessor() if args.formulas else None
+        summary = convert_pdf(
+            args.input,
+            args.out,
+            dpi=args.dpi,
+            formula_processor=formula_processor,
+        )
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
     document = (

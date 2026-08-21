@@ -15,6 +15,9 @@ from scan2hwpx.ir.models import Document
 from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
 from scan2hwpx.preprocess import preprocess_for_ocr
 from scan2hwpx.review import write_review
+from scan2hwpx.vision.dataset import write_formula_manifest
+from scan2hwpx.vision.formulas import FormulaProcessor
+from scan2hwpx.vision.pdf import extract_formulas as _extract_formulas
 
 
 def convert_pdf(
@@ -22,6 +25,7 @@ def convert_pdf(
     output_path: Path,
     dpi: int = 300,
     progress: Callable[[str], None] | None = None,
+    formula_processor: FormulaProcessor | None = None,
 ) -> dict[str, object]:
     output_dir = output_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -41,6 +45,9 @@ def convert_pdf(
             progress(message)
 
     document = PaddlePdfOcrProvider(dpi=dpi).convert(input_path, report)
+    if formula_processor is not None:
+        _extract_formulas(input_path, document, output_dir, dpi, formula_processor, progress)
+        write_formula_manifest(document, output_dir / "formula_training.jsonl")
     blocks = [block for page in document.pages for block in page.blocks]
     clean_items = build_clean_items(document)
     if not blocks or not any(block.text.strip() for block in blocks):

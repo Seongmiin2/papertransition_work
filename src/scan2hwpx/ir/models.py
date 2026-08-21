@@ -26,6 +26,17 @@ class BlockKind(StrEnum):
     UNKNOWN = "unknown"
 
 
+class FormulaFormat(StrEnum):
+    LATEX = "latex"
+    MATHML = "mathml"
+
+
+class FormulaStatus(StrEnum):
+    RECOGNIZED = "recognized"
+    NEEDS_REVIEW = "needs_review"
+    IMAGE_FALLBACK = "image_fallback"
+
+
 class AnnotationState(StrEnum):
     PRINTED = "printed"
     ANNOTATION = "annotation"
@@ -75,6 +86,24 @@ class PageQuality(StrictModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class FormulaValidation(StrictModel):
+    syntax_valid: bool = False
+    render_similarity: float | None = Field(default=None, ge=0, le=1)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class Formula(StrictModel):
+    id: str
+    bbox: BBox
+    source_image: str
+    expression: str = ""
+    format: FormulaFormat = FormulaFormat.LATEX
+    confidence: float = Field(ge=0, le=1)
+    source_provider: str
+    status: FormulaStatus = FormulaStatus.NEEDS_REVIEW
+    validation: FormulaValidation = Field(default_factory=FormulaValidation)
+
+
 class Page(StrictModel):
     page_no: int = Field(ge=1)
     width: float = Field(gt=0)
@@ -82,6 +111,7 @@ class Page(StrictModel):
     rotation: int = 0
     columns: list[Column] = Field(default_factory=list)
     blocks: list[Block]
+    formulas: list[Formula] = Field(default_factory=list)
     quality: PageQuality
 
 
@@ -124,7 +154,7 @@ class QAReport(StrictModel):
 
 
 class Document(StrictModel):
-    schema_version: str = "0.1.0"
+    schema_version: str = "0.2.0"
     id: str
     source_hash: str
     page_size: tuple[float, float]
