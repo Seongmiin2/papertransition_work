@@ -24,6 +24,28 @@ async function sha256(path: string): Promise<string> {
 
 function publish(job: JobRecord): JobRecord { window?.webContents.send("jobs:event", job); return job; }
 
+function progressFromMessage(message: string): { progress: number; pageCount: number | null } {
+  const page = /page\s+(\d+)\/(\d+)/i.exec(message);
+  if (page) {
+    const current = Number(page[1]);
+    const total = Number(page[2]);
+    return { progress: Math.min(0.84, 0.1 + (current / total) * 0.74), pageCount: total };
+  }
+  if (message.includes("writing editable HWPX")) return { progress: 0.84, pageCount: null };
+  return { progress: 0.1, pageCount: null };
+}
+
+function terminateWorker(child: ChildProcessWithoutNullStreams): void {
+  if (process.platform === "win32" && child.pid) {
+    spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    return;
+  }
+  child.kill("SIGTERM");
+}
+
 function workerFailureMessage(code: number | null, stderr: string): string {
   const detail = stderr
     .split(/\r?\n/)
@@ -60,6 +82,7 @@ async function processQueue(): Promise<void> {
       throw new Error("변환 엔진이 준비되지 않았습니다. .venv\\Scripts\\python.exe를 찾지 못했습니다.");
     }
     const workerPath = join(projectRoot, "src");
+    const pageAnomalyModel = join(projectRoot, "output", "trained-models", "page-anomaly-v1", "page_anomaly_linear_autoencoder.npz");
     const workerEnv = {
       ...process.env,
       PYTHONPATH: [workerPath, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
@@ -91,7 +114,10 @@ async function processQueue(): Promise<void> {
         }
         database.event(id, event.event, event.data);
         if (isTerminal(database.get(id).status)) continue;
-        if (event.event === "progress") publish(database.setProgress(id, Math.min(0.84, database.get(id).progress + 0.01)));
+        if (event.event === "progress") {
+          const next = progressFromMessage(String(event.data.message ?? ""));
+          publish(database.setProgress(id, next.progress, next.pageCount));
+        }
         if (event.event === "completed") {
           publish(database.transition(id, "STRUCTURING", { progress: 0.86 }));
           publish(database.transition(id, "EXPORTING", { progress: 0.92 }));
@@ -115,7 +141,7 @@ async function processQueue(): Promise<void> {
       }
       void processQueue();
     });
-    child.stdin.write(JSON.stringify({ protocol_version: "1.0", request_id: randomUUID(), method: "convert", params: { job_id: id, input_pdf: staged, work_dir: root, options: { remove_red_marks: true, ocr_provider: "local", layout: "exam_auto" } } }) + "\n");
+    child.stdin.write(JSON.stringify({ protocol_version: "1.0", request_id: randomUUID(), method: "convert", params: { job_id: id, input_pdf: staged, work_dir: root, options: { remove_red_marks: true, ocr_provider: "local", layout: "exam_auto", mode: "fast", dpi: 240, device: "auto", renderer: "semantic", page_anomaly_model: existsSync(pageAnomalyModel) ? pageAnomalyModel : null } } }) + "\n");
     child.stdin.end();
   } catch (error) {
     publish(database.transition(id, "FAILED", { errorMessage: error instanceof Error ? error.message : String(error) }));
@@ -151,7 +177,8 @@ app.whenReady().then(() => {
     if (queuedIndex >= 0) queue.splice(queuedIndex, 1);
     const current = database.get(id);
     if (!isTerminal(current.status)) publish(database.transition(id, "CANCELLED"));
-    running.get(id)?.kill();
+    const child = running.get(id);
+    if (child) terminateWorker(child);
   });
   ipcMain.handle("files:open", async (_event: IpcMainInvokeEvent, path: string) => { const error = await shell.openPath(path); if (error) throw new Error(error); });
   createWindow();

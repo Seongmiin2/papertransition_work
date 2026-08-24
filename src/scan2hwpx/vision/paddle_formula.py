@@ -7,6 +7,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from scan2hwpx.images import write_image
 from scan2hwpx.ir.models import BBox, Formula, FormulaStatus
 from scan2hwpx.vision.formulas import (
     FormulaProcessor,
@@ -75,8 +76,7 @@ class PaddleFormulaProcessor(FormulaProcessor):
             formula_id = f"p{page_no}-f{index}"
             crop_path = asset_dir / f"{formula_id}.png"
             crop = image[y0:y1, x0:x1]
-            if not cv2.imwrite(str(crop_path), cv2.cvtColor(crop, cv2.COLOR_RGB2BGR)):
-                raise OSError(f"?? crop? ??? ? ????: {crop_path}")
+            write_image(crop_path, cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))
             validation = validate_formula_expression(FormulaRecognition(expression, 0.5))
             detection_score = _detection_score(coordinates, layout_boxes)
             status = FormulaStatus.NEEDS_REVIEW

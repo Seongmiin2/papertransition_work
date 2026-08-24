@@ -12,13 +12,18 @@ def write_formula_manifest(document: Document, output_path: Path) -> Path:
     lines: list[str] = []
     for page in document.pages:
         for formula in page.formulas:
+            image = Path(formula.source_image)
+            try:
+                image_value = image.resolve().relative_to(output_path.parent.resolve()).as_posix()
+            except ValueError:
+                image_value = str(image.resolve())
             lines.append(
                 json.dumps(
                     {
                         "document_id": document.id,
                         "page": page.page_no,
                         "formula_id": formula.id,
-                        "image": formula.source_image,
+                        "image": image_value,
                         "bbox": list(formula.bbox.pixel),
                         "prediction": formula.expression,
                         "target": None,

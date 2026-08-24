@@ -8,6 +8,7 @@ from typing import Protocol
 import cv2
 import numpy as np
 
+from scan2hwpx.images import write_image
 from scan2hwpx.ir.models import (
     BBox,
     Formula,
@@ -69,8 +70,7 @@ class FormulaProcessor:
             crop = image[y0:y1, x0:x1]
             formula_id = f"p{page_no}-f{index}"
             crop_path = asset_dir / f"{formula_id}.png"
-            if not cv2.imwrite(str(crop_path), _to_bgr(crop)):
-                raise OSError(f"?? crop? ??? ? ????: {crop_path}")
+            write_image(crop_path, _to_bgr(crop))
 
             recognition = self.recognizer.recognize(crop)
             validation = validate_formula_expression(recognition)
@@ -105,11 +105,11 @@ def validate_formula_expression(recognition: FormulaRecognition) -> FormulaValid
     expression = recognition.expression.strip()
     warnings: list[str] = []
     if not expression:
-        return FormulaValidation(warnings=["??? ?? ??? ????."])
+        return FormulaValidation(warnings=["인식된 수식이 없습니다."])
     if recognition.format == FormulaFormat.MATHML:
         valid = expression.startswith("<math") and expression.endswith("</math>")
         if not valid:
-            warnings.append("MathML ?? ??? ???? ????.")
+            warnings.append("MathML 문법이 완전하지 않습니다.")
         return FormulaValidation(syntax_valid=valid, warnings=warnings)
 
     braces = 0
@@ -125,10 +125,10 @@ def validate_formula_expression(recognition: FormulaRecognition) -> FormulaValid
     if braces != 0:
         valid = False
     if not valid:
-        warnings.append("LaTeX ???? ?? ?? ????.")
+        warnings.append("LaTeX 중괄호의 짝이 맞지 않습니다.")
     if re.search(r"\\(?:frac|sqrt)\s*$", expression):
         valid = False
-        warnings.append("LaTeX ??? ????? ????.")
+        warnings.append("LaTeX 명령에 필요한 인수가 없습니다.")
     return FormulaValidation(syntax_valid=valid, warnings=warnings)
 
 

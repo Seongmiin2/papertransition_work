@@ -15,6 +15,14 @@ def recognize_windows_image(
     return asyncio.run(_recognize_tiled(image, tile_size, overlap))
 
 
+def recognize_windows_regions(
+    image: np.ndarray,
+    regions: list[tuple[float, float, float, float]],
+) -> list[tuple[tuple[float, float, float, float], str, float]]:
+    """Recognize selected line regions while creating the Windows OCR engine only once."""
+    return asyncio.run(_recognize_regions(image, regions))
+
+
 async def _recognize_tiled(
     image: np.ndarray, tile_size: int, overlap: int
 ) -> list[tuple[tuple[float, float, float, float], str, float]]:
@@ -59,4 +67,43 @@ async def _recognize_tiled(
                     recognized.append(
                         ((x0 + left, y0 + top, x0 + right, y0 + bottom), line.text.strip(), 0.9)
                     )
+    return recognized
+
+
+async def _recognize_regions(
+    image: np.ndarray,
+    regions: list[tuple[float, float, float, float]],
+) -> list[tuple[tuple[float, float, float, float], str, float]]:
+    from winrt.windows.globalization import Language
+    from winrt.windows.graphics.imaging import BitmapDecoder
+    from winrt.windows.media.ocr import OcrEngine
+    from winrt.windows.storage import FileAccessMode, StorageFile
+
+    engine = OcrEngine.try_create_from_language(Language("ko-KR"))
+    if engine is None:
+        return []
+    height, width = image.shape[:2]
+    recognized: list[tuple[tuple[float, float, float, float], str, float]] = []
+    with tempfile.TemporaryDirectory(prefix="exam2hwpx-regions-") as folder:
+        for index, (left, top, right, bottom) in enumerate(regions):
+            x0 = max(0, int(left) - 18)
+            y0 = max(0, int(top) - 8)
+            x1 = min(width, int(right) + 18)
+            y1 = min(height, int(bottom) + 8)
+            crop = image[y0:y1, x0:x1]
+            if crop.size == 0:
+                continue
+            scale = max(1.0, 64 / max(1, crop.shape[0]))
+            if scale > 1.05:
+                crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            crop_path = Path(folder) / f"region-{index}.png"
+            cv2.imwrite(str(crop_path), cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))
+            storage_file = await StorageFile.get_file_from_path_async(str(crop_path))
+            stream = await storage_file.open_async(FileAccessMode.READ)
+            decoder = await BitmapDecoder.create_async(stream)
+            bitmap = await decoder.get_software_bitmap_async()
+            result = await engine.recognize_async(bitmap)
+            text = " ".join(line.text.strip() for line in result.lines if line.text.strip())
+            if text:
+                recognized.append(((left, top, right, bottom), text, 0.88))
     return recognized

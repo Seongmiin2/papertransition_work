@@ -41,7 +41,7 @@ def load_verified_formula_samples(manifest: Path) -> tuple[list[VerifiedFormulaS
     hashes: dict[str, str] = {}
     documents: set[str] = set()
     if not manifest.exists():
-        audit.errors.append(f"manifest? ????: {manifest}")
+        audit.errors.append(f"manifest를 찾을 수 없습니다: {manifest}")
         return samples, audit
 
     for line_number, line in enumerate(manifest.read_text(encoding="utf-8").splitlines(), start=1):
@@ -57,19 +57,17 @@ def load_verified_formula_samples(manifest: Path) -> tuple[list[VerifiedFormulaS
         if not target:
             audit.missing_targets += 1
             continue
-        image = Path(str(row.get("image") or ""))
-        if not image.is_absolute():
-            image = manifest.parent / image
+        image = _resolve_manifest_image(manifest, str(row.get("image") or ""))
         if not image.is_file():
             audit.missing_images += 1
-            audit.errors.append(f"{line_number}? ??? ??: {image}")
+            audit.errors.append(f"{line_number}행 이미지 없음: {image}")
             continue
         digest = hashlib.sha256(image.read_bytes()).hexdigest()
         prior = hashes.get(digest)
         if prior is not None:
             if prior != target:
                 audit.conflicting_duplicates += 1
-                audit.errors.append(f"{line_number}? ?? ???? ??? ?????.")
+                audit.errors.append(f"{line_number}행 중복 이미지에 서로 다른 정답이 있습니다.")
             continue
         hashes[digest] = target
         document_id = str(row.get("document_id") or "").strip()
@@ -126,3 +124,10 @@ def write_training_splits(
 
 def normalize_latex(expression: str) -> str:
     return " ".join(expression.replace("\r", " ").replace("\n", " ").split())
+
+
+def _resolve_manifest_image(manifest: Path, value: str) -> Path:
+    image = Path(value)
+    if image.is_absolute() or image.is_file():
+        return image
+    return manifest.parent / image

@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "pairs": [
+    {
+      "id": "hongcheon-middle2-2025-final",
+      "source_pdf": "홍천중2.pdf",
+      "transcript_pdf": "files (1)/홍천중학교_2학년_1학기_2차지필평가_국어_텍스트PDF.pdf",
+      "editable_target": "files (1)/홍천중학교_2학년_1학기_2차지필평가_국어_한글파일.docx",
+      "editable_pages_observed": 11,
+      "split": "test",
+      "visually_verified": true,
+      "geometry_target": false,
+      "use_for": [
+        "gold_ocr_benchmark",
+        "editable_structure_reference",
+        "table_and_style_reference"
+      ],
+      "notes": [
+        "스캔 PDF 7쪽은 두 단 시험지이며 텍스트 PDF 12쪽은 단별로 재흐름된 동일 본문이다.",
+        "DOCX와 텍스트 PDF의 본문은 공백 제거 기준으로 자동 비교한다.",
+        "DOCX의 페이지 기하를 원본 스캔의 정답으로 사용하지 않는다."
+      ]
+    }
+  ]
+}

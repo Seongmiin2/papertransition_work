@@ -51,9 +51,10 @@ export class JobDatabase {
       .map((job) => job.id);
   }
 
-  setProgress(id: string, progress: number): JobRecord {
+  setProgress(id: string, progress: number, pageCount: number | null = null): JobRecord {
     const job = this.get(id);
     job.progress = progress;
+    if (pageCount !== null) job.pageCount = pageCount;
     job.updatedAt = new Date().toISOString();
     this.save();
     return job;

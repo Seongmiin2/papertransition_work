@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ def render_with_hancom(document: Document, output: Path) -> None:
         from pyhwpx import Hwp  # type: ignore[import-untyped]
     except ImportError as exc:
         raise RuntimeError("pyhwpx가 설치되지 않았습니다.") from exc
+    _ensure_hancom_security_module()
     output.parent.mkdir(parents=True, exist_ok=True)
     hwp: Any = Hwp(new=True, visible=False)
     try:
@@ -43,6 +45,7 @@ def render_with_hancom(document: Document, output: Path) -> None:
 def verify_with_hancom(path: Path, expected_text: str) -> tuple[bool, int]:
     from pyhwpx import Hwp
 
+    _ensure_hancom_security_module()
     hwp: Any = Hwp(new=True, visible=False)
     try:
         opened = bool(hwp.open(str(path.resolve())))
@@ -55,6 +58,7 @@ def verify_with_hancom(path: Path, expected_text: str) -> tuple[bool, int]:
 def render_clean_with_hancom(document: Document, output: Path) -> None:
     from pyhwpx import Hwp
 
+    _ensure_hancom_security_module()
     output.parent.mkdir(parents=True, exist_ok=True)
     items = build_clean_items(document)
     hwp: Any = Hwp(new=True, visible=False)
@@ -122,3 +126,19 @@ def _insert_blocks(hwp: Any, blocks: list[Any]) -> None:
         prefix = "[검토 필요] " if block.confidence < 0.65 else ""
         hwp.insert_text(prefix + block.text)
         hwp.BreakPara()
+
+
+def _ensure_hancom_security_module() -> None:
+    """Register pyhwpx's local file checker without relying on the global pip command."""
+    if os.name != "nt":
+        return
+    import winreg
+
+    import pyhwpx
+
+    dll = Path(pyhwpx.__file__).with_name("FilePathCheckerModule.dll").resolve()
+    if not dll.is_file():
+        raise RuntimeError(f"한글 자동화 보안 모듈을 찾을 수 없습니다: {dll}")
+    key_path = r"Software\HNC\HwpAutomation\Modules"
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+        winreg.SetValueEx(key, "FilePathCheckerModule", 0, winreg.REG_SZ, str(dll))

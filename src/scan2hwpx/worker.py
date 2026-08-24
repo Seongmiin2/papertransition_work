@@ -43,12 +43,34 @@ def handle(request: dict[str, Any]) -> None:
         raise OSError(f"insufficient disk space: need {required} bytes")
     output = output_dir / "result.hwpx"
     emit(request_id, "started", {"job_id": params["job_id"]})
+    options = params.get("options") or {}
+    dpi = int(options.get("dpi", 240))
+    fusion_mode = str(options.get("mode", "fast"))
+    device = str(options.get("device", "auto"))
+    renderer = str(options.get("renderer", "fidelity"))
+    anomaly_value = options.get("page_anomaly_model")
+    page_anomaly_model = Path(str(anomaly_value)).resolve() if anomaly_value else None
 
     def progress(message: str) -> None:
         emit(request_id, "progress", {"stage": "OCR", "message": message})
 
     with contextlib.redirect_stdout(sys.stderr):
-        result = convert_pdf(source, output, dpi=300, progress=progress)
+        from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
+
+        provider = PaddlePdfOcrProvider(
+            dpi=dpi,
+            fusion_mode=fusion_mode,
+            device=device,
+            page_anomaly_model=page_anomaly_model,
+        )
+        result = convert_pdf(
+            source,
+            output,
+            dpi=dpi,
+            progress=progress,
+            ocr_provider=provider,
+            renderer=renderer,
+        )
     emit(request_id, "completed", {"output_path": str(output), **result})
 
 

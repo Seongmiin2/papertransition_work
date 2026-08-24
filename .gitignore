@@ -10,6 +10,10 @@ __pycache__/
 .ruff_cache/
 .env
 output/
+test_data/
+models/
+P고2/
+files (1)/
 exchange/
 reports/reference_pages/
 *.pdf

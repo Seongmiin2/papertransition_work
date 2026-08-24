@@ -30,9 +30,9 @@ def test_convert_pdf_falls_back_and_atomically_replaces_output(
     monkeypatch.setattr(pipeline, "_write_debug_images", lambda *_args: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(pipeline, "write_review", lambda *_args: None)  # type: ignore[attr-defined]
 
-    summary = pipeline.convert_pdf(input_path, output)
+    summary = pipeline.convert_pdf(input_path, output, renderer="hancom")
 
-    assert summary["render_engine"] == "minimal-hwpx"
+    assert summary["render_engine"] == "hancom-template-hwpx"
     assert summary["hancom_reopened"] is False
     assert validate_hwpx(output).valid
     assert not (tmp_path / ".result.candidate.hwpx").exists()
