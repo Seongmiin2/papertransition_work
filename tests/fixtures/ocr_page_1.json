@@ -1,0 +1,18 @@
+{
+  "document_id": "fixture-exam-page-1",
+  "pages": [
+    {
+      "page_no": 1,
+      "width": 2480,
+      "height": 3508,
+      "rotation": 0,
+      "blocks": [
+        {"id": "b-title", "kind": "title", "bbox": [180, 140, 2300, 260], "text": "3학년 국어 기말고사", "confidence": 0.99},
+        {"id": "b-question", "kind": "question", "bbox": [180, 420, 1120, 570], "text": "1. 다음 글의 내용으로 적절한 것은? [3점]", "confidence": 0.98},
+        {"id": "b-choice", "kind": "choice", "bbox": [220, 610, 1100, 760], "text": "① 첫 번째 선택지", "confidence": 0.97},
+        {"id": "b-mark", "kind": "unknown", "bbox": [800, 600, 1000, 800], "text": "채점 표시", "confidence": 0.40, "annotation_state": "annotation"},
+        {"id": "b-footer", "kind": "footer", "bbox": [900, 3340, 1580, 3420], "text": "3학년 국어 1/8", "confidence": 0.99}
+      ]
+    }
+  ]
+}

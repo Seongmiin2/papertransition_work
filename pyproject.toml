@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "scan2hwpx"
+version = "0.0.1"
+description = "Fixture-driven PDF-to-IR-to-HWPX technical spike"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.7,<3",
+  "lxml>=5.2,<7",
+  "tkinterdnd2>=0.4.3,<1",
+  "pymupdf>=1.24,<2",
+  "olefile>=0.47,<1",
+  "pillow>=10,<13",
+  "pyyaml>=6,<7",
+  "numpy>=2,<3",
+  "paddleocr>=3.0,<4",
+  "pyhwpx>=1.7.2,<2",
+  "winrt-runtime>=3.2.1; platform_system == 'Windows'",
+  "winrt-Windows.Foundation>=3.2.1; platform_system == 'Windows'",
+  "winrt-Windows.Foundation.Collections>=3.2.1; platform_system == 'Windows'",
+  "winrt-Windows.Globalization>=3.2.1; platform_system == 'Windows'",
+  "winrt-Windows.Graphics.Imaging>=3.2.1; platform_system == 'Windows'",
+  "winrt-Windows.Media.Ocr>=3.2.1; platform_system == 'Windows'",
+  "winrt-Windows.Storage>=3.2.1; platform_system == 'Windows'",
+  "winrt-Windows.Storage.Streams>=3.2.1; platform_system == 'Windows'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2", "ruff>=0.5", "mypy>=1.10"]
+cpu = ["paddlepaddle>=3.0,<4"]
+gpu = ["paddlepaddle-gpu>=3.0,<4"]
+vision = ["paddlex[ocr]>=3.7,<4", "chardet==5.2.0; platform_system == 'Windows'"]
+
+[project.scripts]
+scan2hwpx = "scan2hwpx.cli:main"
+scan2hwpx-desktop = "scan2hwpx.desktop_app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scan2hwpx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]
