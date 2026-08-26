@@ -175,7 +175,14 @@ def build_layout_seed_dataset(
 def detect_ruled_regions(path: Path) -> list[LayoutAnnotation]:
     with Image.open(path) as source:
         rgb = np.asarray(ImageOps.exif_transpose(source).convert("RGB"))
-    horizontal, vertical = _ruled_masks(rgb)
+    return detect_ruled_regions_array(rgb)
+
+
+def detect_ruled_regions_array(
+    rgb: np.ndarray[Any, Any], *, already_preprocessed: bool = False
+) -> list[LayoutAnnotation]:
+    """Detect ruled layout regions directly from an in-memory RGB page."""
+    horizontal, vertical = _ruled_masks(rgb, already_preprocessed=already_preprocessed)
     height, width = horizontal.shape
     ruled = cv2.morphologyEx(
         cv2.bitwise_or(horizontal, vertical),
@@ -257,8 +264,12 @@ def detect_table_grids(path: Path) -> list[TableGrid]:
     return grids
 
 
-def _ruled_masks(rgb: np.ndarray[Any, Any]) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
-    rgb = preprocess_for_ocr(np.asarray(rgb, dtype=np.uint8)).image
+def _ruled_masks(
+    rgb: np.ndarray[Any, Any], *, already_preprocessed: bool = False
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    rgb = np.asarray(rgb, dtype=np.uint8)
+    if not already_preprocessed:
+        rgb = preprocess_for_ocr(rgb).image
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
     height, width = binary.shape

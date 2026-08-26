@@ -10,7 +10,6 @@ requires-python = ">=3.11"
 dependencies = [
   "pydantic>=2.7,<3",
   "lxml>=5.2,<7",
-  "tkinterdnd2>=0.4.3,<1",
   "pymupdf>=1.24,<2",
   "olefile>=0.47,<1",
   "pillow>=10,<13",
@@ -36,7 +35,6 @@ vision = ["paddlex[ocr]>=3.7,<4", "chardet==5.2.0; platform_system == 'Windows'"
 
 [project.scripts]
 scan2hwpx = "scan2hwpx.cli:main"
-scan2hwpx-desktop = "scan2hwpx.desktop_app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scan2hwpx"]

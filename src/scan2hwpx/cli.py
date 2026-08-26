@@ -4,33 +4,6 @@ import argparse
 import json
 from pathlib import Path
 
-from scan2hwpx.batch import convert_directory
-from scan2hwpx.hwpx import render_hwpx, validate_hwpx
-from scan2hwpx.ocr.providers import FixtureOcrProvider
-from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
-from scan2hwpx.pipeline import convert_pdf, inspect_pdf
-from scan2hwpx.reference import audit_reference_directory
-from scan2hwpx.reference.synthetic import build_ocr_dataset
-from scan2hwpx.reference.verified import import_verified_ocr
-from scan2hwpx.training import prepare_training_corpus
-from scan2hwpx.training.ocr_adaptation import (
-    build_ocr_adaptation_dataset,
-    write_dictionary_compatible_labels,
-)
-from scan2hwpx.training.ocr_benchmark import (
-    run_ocr_benchmark,
-    write_ocr_promotion_decision,
-)
-from scan2hwpx.training.page_anomaly import train_page_anomaly_model
-from scan2hwpx.vision.benchmark import run_formula_benchmark
-from scan2hwpx.vision.layout_dataset import build_layout_seed_dataset
-from scan2hwpx.vision.paddle_formula import PaddleFormulaProcessor
-from scan2hwpx.vision.training_data import (
-    load_verified_formula_samples,
-    split_by_document,
-    write_training_splits,
-)
-
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="scan2hwpx")
@@ -44,8 +17,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     convert.add_argument("--template", type=Path, default=Path("templates/exam_base.hwpx"))
     convert.add_argument("--out", "--output", dest="out", type=Path, required=True)
-    convert.add_argument("--remove-red-marks", action="store_true")
-    convert.add_argument("--layout", default="exam-two-column", choices=["exam-two-column"])
     convert.add_argument("--dpi", type=int, default=240)
     convert.add_argument("--formulas", action="store_true")
     convert.add_argument("--formula-model", default="PP-FormulaNet_plus-S")
@@ -54,7 +25,7 @@ def _parser() -> argparse.ArgumentParser:
     convert.add_argument("--lexicon", type=Path)
     convert.add_argument(
         "--renderer",
-        choices=["fidelity", "semantic", "portable", "hancom"],
+        choices=["fidelity", "semantic", "editable", "portable", "hancom"],
         default="fidelity",
     )
     convert.add_argument("--device", default="auto", help="auto, cpu, gpu:0, ...")
@@ -97,17 +68,17 @@ def _parser() -> argparse.ArgumentParser:
     synthetic.add_argument("--base-model-dir", type=Path)
     batch = commands.add_parser(
         "batch-convert",
-        help="Convert every PDF in a directory with one warm OCR model and resumable jobs",
+        help="Convert up to 10 PDFs with resumable jobs and two GPU OCR workers",
     )
     batch.add_argument("input", type=Path)
     batch.add_argument("--out", type=Path, required=True)
-    batch.add_argument("--dpi", type=int, default=240)
+    batch.add_argument("--dpi", type=int, default=120)
     batch.add_argument("--mode", choices=["fast", "balanced", "accurate"], default="fast")
     batch.add_argument("--lexicon", type=Path)
     batch.add_argument("--no-resume", action="store_true")
     batch.add_argument(
         "--renderer",
-        choices=["fidelity", "semantic", "portable", "hancom"],
+        choices=["fidelity", "semantic", "editable", "portable", "hancom"],
         default="fidelity",
     )
     batch.add_argument("--device", default="auto", help="auto, cpu, gpu:0, ...")
@@ -193,21 +164,33 @@ def _default_lexicon(value: Path | None) -> Path | None:
 def main() -> int:
     args = _parser().parse_args()
     if args.command == "inspect":
+        from scan2hwpx.pipeline import inspect_pdf
+
         print(json.dumps(inspect_pdf(args.input), ensure_ascii=False, indent=2))
         return 0
     if args.command == "validate":
+        from scan2hwpx.hwpx.validate import validate_hwpx
+
         result = validate_hwpx(args.input)
         for error in result.errors:
             print(f"ERROR: {error}")
         print("valid" if result.valid else "invalid")
         return 0 if result.valid else 1
     if args.command == "formula-audit":
+        from scan2hwpx.vision.training_data import (
+            load_verified_formula_samples,
+            split_by_document,
+            write_training_splits,
+        )
+
         samples, audit = load_verified_formula_samples(args.manifest)
         if args.split_out is not None and samples:
             write_training_splits(split_by_document(samples), args.split_out)
         print(json.dumps(audit.__dict__, ensure_ascii=False, indent=2))
         return 0 if audit.trainable else 2
     if args.command == "formula-benchmark":
+        from scan2hwpx.vision.benchmark import run_formula_benchmark
+
         report = run_formula_benchmark(
             args.input,
             args.out,
@@ -225,6 +208,8 @@ def main() -> int:
         successful = sum(int(item["successful"]) for item in report["summary"].values())
         return 0 if successful else 1
     if args.command == "reference-audit":
+        from scan2hwpx.reference import audit_reference_directory
+
         report = audit_reference_directory(args.input, args.out)
         print(
             json.dumps(
@@ -239,6 +224,8 @@ def main() -> int:
         )
         return 0 if not report["failures"] else 2
     if args.command == "build-ocr-dataset":
+        from scan2hwpx.reference.synthetic import build_ocr_dataset
+
         report = build_ocr_dataset(
             args.manifest,
             args.out,
@@ -253,6 +240,8 @@ def main() -> int:
         )
         return 0
     if args.command == "batch-convert":
+        from scan2hwpx.batch import convert_directory
+
         report = convert_directory(
             args.input,
             args.out,
@@ -268,10 +257,14 @@ def main() -> int:
         print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
         return 1 if report["summary"]["failed"] else 0
     if args.command == "import-ocr-labels":
+        from scan2hwpx.reference.verified import import_verified_ocr
+
         report = import_verified_ocr(args.manifest, args.out)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if not report["failures"] else 2
     if args.command == "build-layout-dataset":
+        from scan2hwpx.vision.layout_dataset import build_layout_seed_dataset
+
         report = build_layout_seed_dataset(
             args.input,
             args.out,
@@ -282,6 +275,8 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     if args.command == "prepare-training-corpus":
+        from scan2hwpx.training import prepare_training_corpus
+
         report = prepare_training_corpus(
             args.inputs,
             args.out,
@@ -291,6 +286,8 @@ def main() -> int:
         print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
         return 0 if not report["failures"] else 2
     if args.command == "train-page-anomaly":
+        from scan2hwpx.training.page_anomaly import train_page_anomaly_model
+
         report = train_page_anomaly_model(
             args.manifest,
             args.out,
@@ -311,6 +308,8 @@ def main() -> int:
         )
         return 0
     if args.command == "ocr-benchmark":
+        from scan2hwpx.training.ocr_benchmark import run_ocr_benchmark
+
         report = run_ocr_benchmark(
             args.source,
             args.transcript,
@@ -324,6 +323,8 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     if args.command == "build-ocr-adaptation-dataset":
+        from scan2hwpx.training.ocr_adaptation import build_ocr_adaptation_dataset
+
         report = build_ocr_adaptation_dataset(
             args.manifest,
             args.base_dataset,
@@ -337,12 +338,16 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     if args.command == "filter-ocr-dataset":
+        from scan2hwpx.training.ocr_adaptation import write_dictionary_compatible_labels
+
         report = write_dictionary_compatible_labels(
             args.dataset, args.character_dict, suffix=args.suffix
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     if args.command == "compare-ocr-models":
+        from scan2hwpx.training.ocr_benchmark import write_ocr_promotion_decision
+
         decision = write_ocr_promotion_decision(args.baseline, args.candidate, args.out)
         print(json.dumps(decision, ensure_ascii=False, indent=2))
         return 0 if decision["promoted"] else 3
@@ -350,14 +355,17 @@ def main() -> int:
         args.input.suffix.lower() == ".pdf" or getattr(args, "provider", "auto") == "paddleocr"
     )
     if args.command == "convert" and use_pdf:
-        formula_processor = (
-            PaddleFormulaProcessor(
+        from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
+        from scan2hwpx.pipeline import convert_pdf
+
+        formula_processor = None
+        if args.formulas:
+            from scan2hwpx.vision.paddle_formula import PaddleFormulaProcessor
+
+            formula_processor = PaddleFormulaProcessor(
                 formula_model=args.formula_model,
                 layout_model=args.formula_layout_model,
             )
-            if args.formulas
-            else None
-        )
         summary = convert_pdf(
             args.input,
             args.out,
@@ -374,6 +382,12 @@ def main() -> int:
         )
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
+    from scan2hwpx.hwpx import render_hwpx, validate_hwpx
+    from scan2hwpx.ocr.providers import FixtureOcrProvider
+
+    if use_pdf:
+        from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
+
     document = (
         PaddlePdfOcrProvider().convert(args.input)
         if use_pdf

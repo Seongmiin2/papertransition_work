@@ -3,6 +3,9 @@ from pathlib import Path
 import numpy as np
 
 from scan2hwpx.ir.models import FormulaStatus
+from scan2hwpx.ocr.providers.fixture import FixtureOcrProvider
+from scan2hwpx.page_processor import PageProcessor
+from scan2hwpx.preprocess import preprocess_for_ocr
 from scan2hwpx.vision.formulas import (
     FormulaCandidate,
     FormulaProcessor,
@@ -68,3 +71,21 @@ def test_empty_formula_uses_image_fallback(tmp_path: Path) -> None:
 
     assert formula.status == FormulaStatus.IMAGE_FALLBACK
     assert not validate_formula_expression(FormulaRecognition("", 0.0)).syntax_valid
+
+
+def test_page_processor_finishes_formula_work_on_current_page(tmp_path: Path) -> None:
+    document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
+    image = np.full((100, 120, 3), 255, dtype=np.uint8)
+    processor = FormulaProcessor(StubDetector(), StubRecognizer())
+    page_processor = PageProcessor(tmp_path, "fixture.pdf", formula_processor=processor)
+
+    page_processor.process(
+        0,
+        1,
+        document.pages[0],
+        image,
+        preprocess_for_ocr(image),
+    )
+
+    assert len(document.pages[0].formulas) == 1
+    assert page_processor.handled_all(document.pages)

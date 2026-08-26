@@ -5,7 +5,7 @@ import os
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from scan2hwpx.exam_parser import parse_questions
 from scan2hwpx.ir.models import (
@@ -21,7 +21,15 @@ from scan2hwpx.ir.models import (
 )
 from scan2hwpx.ocr.quality import KoreanQualityRouter, needs_secondary_recognition
 
+if TYPE_CHECKING:
+    from scan2hwpx.vision.page_layout import PageLayout
+
 ProgressCallback = Callable[[int, int, str], None]
+PageCallback = Callable[[int, int, Page, Any, Any], None]
+_LAYOUT_KINDS = {
+    "table": BlockKind.TABLE,
+    "passage_box": BlockKind.PASSAGE_BOX,
+}
 
 
 class PaddlePdfOcrProvider:
@@ -101,14 +109,15 @@ class PaddlePdfOcrProvider:
         self,
         path: Path,
         progress: ProgressCallback | None = None,
-        image_cache: dict[int, tuple[Any, Any]] | None = None,
+        page_callback: PageCallback | None = None,
     ) -> Document:
         import numpy as np
         import pymupdf
 
         from scan2hwpx.preprocess import preprocess_for_ocr
+        from scan2hwpx.vision.page_layout import analyze_page_layout
 
-        raw_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        raw_hash = _sha256(path)
         try:
             pdf = pymupdf.open(path)  # type: ignore[no-untyped-call]
         except Exception as exc:
@@ -125,6 +134,7 @@ class PaddlePdfOcrProvider:
         mask_risks: list[float] = []
         anomaly_scores: list[float | None] = []
         anomaly_flags: list[bool] = []
+        layout_summaries: list[dict[str, Any]] = []
         total = pdf.page_count
         try:
             for page_index in range(total):
@@ -144,10 +154,8 @@ class PaddlePdfOcrProvider:
                     pix.height, pix.width, pix.n
                 )
                 preprocessed = preprocess_for_ocr(image)
-                if image_cache is not None:
-                    # Debug-image and formula extraction stages reuse this instead of
-                    # re-rasterizing and re-preprocessing the same page from disk.
-                    image_cache[page_index] = (image, preprocessed)
+                layout = analyze_page_layout(preprocessed.image, already_preprocessed=True)
+                layout_summaries.append(layout.summary())
                 mask_ratios.append(preprocessed.annotation_ratio)
                 mask_risks.append(preprocessed.text_overlap_risk)
                 results = self._predict(preprocessed.image)
@@ -177,12 +185,20 @@ class PaddlePdfOcrProvider:
                         engine_name = f"paddle+windows-ocr-ko:{self.fusion_mode}"
                 engines.append(engine_name)
                 parsed_page = self._page_from_result(
-                    page_index + 1, pix.width, pix.height, page.rotation, data, path.name
+                    page_index + 1,
+                    pix.width,
+                    pix.height,
+                    page.rotation,
+                    data,
+                    path.name,
+                    layout,
                 )
                 if anomaly_flag and anomaly_score is not None:
                     parsed_page.quality.warnings.append(
                         f"페이지 분포 이탈 감지: reconstruction_mse={anomaly_score:.8f}"
                     )
+                if page_callback is not None:
+                    page_callback(page_index, total, parsed_page, image, preprocessed)
                 pages.append(parsed_page)
         finally:
             pdf.close()  # type: ignore[no-untyped-call]
@@ -222,6 +238,7 @@ class PaddlePdfOcrProvider:
                 "page_anomaly_flags": anomaly_flags,
                 "annotation_mask_ratios": mask_ratios,
                 "annotation_overlap_risks": mask_risks,
+                "page_layouts": layout_summaries,
             },
             pages=pages,
             questions=parse_questions(pages),
@@ -249,6 +266,7 @@ class PaddlePdfOcrProvider:
         rotation: int,
         data: dict[str, Any],
         source_name: str,
+        layout: PageLayout,
     ) -> Page:
         texts = list(data.get("rec_texts", []))
         scores = list(data.get("rec_scores", []))
@@ -273,38 +291,60 @@ class PaddlePdfOcrProvider:
             raw.append(
                 (
                     (x0, y0, x1, y1),
-                    str(text).strip(),
+                    _normalize_exam_text(str(text).strip()),
                     float(score),
                     list(item_candidates),
                     list(item_reasons),
                 )
             )
-        ordered = sorted(raw, key=lambda item: self._reading_key(item[0], width, height))
+        ordered = (
+            sorted(raw, key=lambda item: layout.reading_key(item[0]))
+            if len(layout.column_boxes) > 1
+            else raw
+        )
         blocks: list[Block] = []
         for index, (coords, text, score, item_candidates, item_reasons) in enumerate(ordered):
             x0, y0, x1, y1 = coords
+            style = {
+                "ocr_candidates": item_candidates,
+                "review_reasons": item_reasons,
+                **layout.block_style(coords),
+            }
+            kind = self._kind(text, y0, y1, height)
+            if kind == BlockKind.UNKNOWN:
+                kind = _LAYOUT_KINDS.get(str(style["layout_region"]), kind)
             blocks.append(
                 Block(
                     id=f"p{page_no}-b{index + 1}",
-                    kind=self._kind(text, y0, y1, height),
+                    kind=kind,
                     bbox=BBox(
                         pixel=coords,
                         normalized=(x0 / width, y0 / height, x1 / width, y1 / height),
                     ),
                     reading_order=index,
                     text=text,
-                    style={
-                        "ocr_candidates": item_candidates,
-                        "review_reasons": item_reasons,
-                    },
+                    style=style,
                     confidence=max(0.0, min(1.0, score)),
                     source_provider=self.name,
                     source_payload_ref=f"{source_name}#/pages/{page_no}/lines/{index}",
                     annotation_state=AnnotationState.PRINTED,
                 )
             )
-        left = BBox(pixel=(0, 0, width / 2, height), normalized=(0, 0, 0.5, 1))
-        right = BBox(pixel=(width / 2, 0, width, height), normalized=(0.5, 0, 1, 1))
+        columns = [
+            Column(
+                index=index,
+                bbox=BBox(
+                    pixel=box,
+                    normalized=(
+                        box[0] / width,
+                        box[1] / height,
+                        box[2] / width,
+                        box[3] / height,
+                    ),
+                ),
+            )
+            for index, box in enumerate(layout.column_boxes)
+        ]
         quality = sum(block.confidence for block in blocks) / max(1, len(blocks))
         review_count = sum(bool(block.style.get("review_reasons")) for block in blocks)
         warnings = [f"OCR 엔진 불일치 {review_count}개"] if review_count else []
@@ -315,7 +355,7 @@ class PaddlePdfOcrProvider:
             width=width,
             height=height,
             rotation=rotation,
-            columns=[Column(index=0, bbox=left), Column(index=1, bbox=right)],
+            columns=columns,
             blocks=blocks,
             quality=PageQuality(score=quality, warnings=warnings),
         )
@@ -388,20 +428,6 @@ class PaddlePdfOcrProvider:
         ]
 
     @staticmethod
-    def _reading_key(
-        bbox: tuple[float, float, float, float], width: int, height: int
-    ) -> tuple[int, float, float]:
-        x0, y0, x1, _ = bbox
-        spans_columns = x1 - x0 > width * 0.55
-        if spans_columns and y0 < height * 0.2:
-            column = 0
-        elif spans_columns and y0 > height * 0.8:
-            column = 3
-        else:
-            column = 1 if (x0 + x1) / 2 < width / 2 else 2
-        return column, y0, x0
-
-    @staticmethod
     def _kind(text: str, y0: float, y1: float, height: int) -> BlockKind:
         if y0 > height * 0.92:
             return BlockKind.FOOTER
@@ -421,6 +447,21 @@ def _polygon_bounds(polygon: Any) -> tuple[float, float, float, float]:
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
     return min(xs), min(ys), max(xs), max(ys)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _normalize_exam_text(text: str) -> str:
+    """Fix only high-confidence, score-adjacent Korean exam OCR slips."""
+    text = re.sub(r"것[혼흔훈]\?(?=\s*(?:\[|$))", "것은?", text)
+    text = re.sub(r"(?<![가-힣])것\?(?=\s*(?:\[|$))", "것은?", text)
+    return re.sub(r"(?<!<)보기>", "<보기>", text)
 
 
 def _resolve_device(device: str) -> str:

@@ -5,58 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from scan2hwpx.clean_layout import CleanItem, CleanKind, build_clean_items
-from scan2hwpx.ir.models import BlockKind, Document
-
-
-def render_with_hancom(document: Document, output: Path) -> None:
-    """Create a real editable two-column HWPX through installed Hancom Office."""
-    try:
-        from pyhwpx import Hwp  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise RuntimeError("pyhwpx가 설치되지 않았습니다.") from exc
-    _ensure_hancom_security_module()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    hwp: Any = Hwp(new=True, visible=False)
-    try:
-        coldef = hwp.HParameterSet.HColDef
-        hwp.HAction.GetDefault("MultiColumn", coldef.HSet)
-        coldef.Count = 2
-        coldef.SameSize = 1
-        coldef.SameGap = hwp.MiliToHwpUnit(8.0)
-        coldef.HSet.SetItem("ApplyClass", 832)
-        coldef.HSet.SetItem("ApplyTo", 6)
-        if not hwp.HAction.Execute("MultiColumn", coldef.HSet):
-            raise RuntimeError("한글 2단 설정에 실패했습니다.")
-        for page_index, page in enumerate(document.pages):
-            blocks = sorted(page.blocks, key=lambda block: block.reading_order)
-            left = [block for block in blocks if _column(block) == 0]
-            right = [block for block in blocks if _column(block) == 1]
-            _insert_blocks(hwp, left)
-            hwp.BreakColumn()
-            _insert_blocks(hwp, right)
-            if page_index < len(document.pages) - 1:
-                hwp.BreakPage()
-        if not hwp.save_as(str(output.resolve()), format="HWPX"):
-            raise RuntimeError("한글에서 HWPX 저장에 실패했습니다.")
-    finally:
-        hwp.quit()
-
-
-def verify_with_hancom(path: Path, expected_text: str) -> tuple[bool, int]:
-    from pyhwpx import Hwp
-
-    _ensure_hancom_security_module()
-    hwp: Any = Hwp(new=True, visible=False)
-    try:
-        opened = bool(hwp.open(str(path.resolve())))
-        text = hwp.get_text_file("TEXT", "") if opened else ""
-        return opened and expected_text in text, len(text)
-    finally:
-        hwp.quit()
+from scan2hwpx.ir.models import Document
 
 
 def render_clean_with_hancom(document: Document, output: Path) -> None:
-    from pyhwpx import Hwp
+    from pyhwpx import Hwp  # type: ignore[import-untyped]
 
     _ensure_hancom_security_module()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -110,22 +63,6 @@ def _insert_clean_item(hwp: Any, item: CleanItem) -> None:
     prefix = "[검토 필요] " if item.confidence < 0.65 else ""
     hwp.insert_text(prefix + item.text)
     hwp.BreakPara()
-
-
-def _column(block: Any) -> int:
-    return 0 if (block.bbox.normalized[0] + block.bbox.normalized[2]) / 2 < 0.5 else 1
-
-
-def _insert_blocks(hwp: Any, blocks: list[Any]) -> None:
-    for block in blocks:
-        is_title = block.kind == BlockKind.TITLE
-        is_question = block.kind == BlockKind.QUESTION
-        hwp.set_font(
-            FaceName="함초롬바탕", Height=12 if is_title else 9, Bold=is_title or is_question
-        )
-        prefix = "[검토 필요] " if block.confidence < 0.65 else ""
-        hwp.insert_text(prefix + block.text)
-        hwp.BreakPara()
 
 
 def _ensure_hancom_security_module() -> None:

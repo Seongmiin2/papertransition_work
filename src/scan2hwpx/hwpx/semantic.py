@@ -4,6 +4,7 @@ import base64
 import copy
 import io
 import json
+import re
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -32,6 +33,8 @@ BOLD_CHAR_ID = "7"
 REGULAR_CHAR_ID = "2"
 OCR_CHAR_STYLE_START = 100
 EDITABLE_TEXT_CONFIDENCE = 0.75
+READABLE_LEFT_PARA_ID = "21"
+READABLE_CENTER_PARA_ID = "22"
 
 
 @dataclass(frozen=True)
@@ -57,8 +60,10 @@ def render_semantic_hwpx(
     document: Document,
     layout_seed: Path,
     output: Path,
+    *,
+    include_page_backgrounds: bool = True,
 ) -> SemanticRenderStats:
-    """Overlay editable table cells and extracted pictures on the fidelity background."""
+    """Place editable objects at source coordinates, optionally over page backgrounds."""
     if len(page_images) != len(document.pages):
         raise ValueError("page image count and document page count differ")
     layout_pages = _read_layout_pages(layout_seed, len(page_images))
@@ -89,6 +94,8 @@ def render_semantic_hwpx(
         etree._Element,
         section.xpath(".//hp:pic", namespaces={"hp": HP})[0],
     )
+    if not include_page_backgrounds:
+        _remove_page_backgrounds(members, manifest, paragraphs)
     editable_tables = 0
     extracted_pictures = 0
     editable_text_boxes = 0
@@ -106,6 +113,10 @@ def render_semantic_hwpx(
         table_regions = [
             _scale_region(item, float(page_width), float(page_height))
             for item in _table_regions(layout_page)
+        ]
+        passage_regions = [
+            _scale_region(item, float(page_width), float(page_height))
+            for item in _passage_regions(layout_page)
         ]
         grids = [
             _align_grid_to_seed(grid, table_regions)
@@ -129,10 +140,40 @@ def render_semantic_hwpx(
             )
             _append_control(paragraphs[page_index - 1], table)
             editable_tables += 1
+        passage_groups = _passage_groups(
+            ir_page.blocks,
+            passage_regions,
+            scaled_images,
+            table_regions,
+            page_width,
+            page_height,
+        )
+        grouped_block_ids: set[str] = set()
+        for passage_index, (region, passage_blocks) in enumerate(passage_groups, start=1):
+            passage = _build_passage_text_box(
+                region.bbox,
+                passage_blocks,
+                page_width,
+                page_height,
+                ocr_text_styles,
+                control_id=1_450_000_000 + page_index * 100 + passage_index,
+                z_order=500 + editable_text_boxes,
+            )
+            _append_control(paragraphs[page_index - 1], passage)
+            grouped_block_ids.update(str(block.id) for block in passage_blocks)
+            editable_text_boxes += 1
+            editable_text_characters += sum(len(str(block.text)) for block in passage_blocks)
+        clean_page: Image.Image | None = None
+        if scaled_images:
+            with Image.open(page_path) as opened:
+                source_rgb = np.asarray(opened.convert("RGB"), dtype=np.uint8)
+            clean_page = Image.fromarray(preprocess_for_ocr(source_rgb).image)
         for image_index, region in enumerate(scaled_images, start=1):
             asset_id = f"semantic_image_{page_index}_{image_index}"
             asset_name = f"BinData/{asset_id}.jpg"
-            crop_bytes, crop_size = _crop_image(page_path, region.bbox)
+            if clean_page is None:
+                raise RuntimeError("clean image page is unavailable")
+            crop_bytes, crop_size = _crop_image(clean_page, region.bbox)
             binary_assets[asset_name] = crop_bytes
             picture = _build_picture(
                 background_picture,
@@ -147,8 +188,12 @@ def render_semantic_hwpx(
             _append_control(paragraphs[page_index - 1], picture)
             _add_manifest_item(manifest, asset_id, asset_name)
             extracted_pictures += 1
+        if clean_page is not None:
+            clean_page.close()
         for block_index, block in enumerate(ir_page.blocks, start=1):
-            if not _eligible_editable_block(block, scaled_images, table_regions):
+            if str(block.id) in grouped_block_ids or not _eligible_editable_block(
+                block, scaled_images, table_regions, page_height
+            ):
                 continue
             style_key = _ocr_style_key(block, ir_page.height)
             text_box = _build_text_box(
@@ -170,7 +215,7 @@ def render_semantic_hwpx(
     _write_package(output, members)
     return SemanticRenderStats(
         pages=len(page_images),
-        background_pictures=len(page_images),
+        background_pictures=len(page_images) if include_page_backgrounds else 0,
         editable_tables=editable_tables,
         extracted_pictures=extracted_pictures,
         editable_text_boxes=editable_text_boxes,
@@ -190,6 +235,23 @@ def _read_layout_pages(path: Path, expected_pages: int) -> list[dict[str, Any]]:
 def _read_package(path: Path) -> dict[str, bytes]:
     with zipfile.ZipFile(path) as archive:
         return {name: archive.read(name) for name in archive.namelist()}
+
+
+def _remove_page_backgrounds(
+    members: dict[str, bytes],
+    manifest: etree._Element,
+    paragraphs: list[etree._Element],
+) -> None:
+    for index, paragraph in enumerate(paragraphs, start=1):
+        for picture in paragraph.xpath(".//hp:pic", namespaces={"hp": HP}):
+            parent = picture.getparent()
+            if parent is not None:
+                parent.remove(picture)
+        members.pop(f"BinData/image{index}.jpg", None)
+        for item in manifest.xpath(f".//opf:item[@id='image{index}']", namespaces={"opf": OPF}):
+            parent = item.getparent()
+            if parent is not None:
+                parent.remove(item)
 
 
 def _load_table_parts() -> tuple[etree._Element, etree._Element]:
@@ -239,16 +301,31 @@ def _install_semantic_text_styles(header: etree._Element) -> None:
     if len(para_containers) != 1 or len(char_containers) != 1:
         raise RuntimeError("HWPX text style lists are invalid")
     para_container = para_containers[0]
+    left_source = cast(
+        etree._Element,
+        para_container.xpath(f"./hh:paraPr[@id='{LEFT_PARA_ID}']", namespaces={"hh": HH})[0],
+    )
     if not para_container.xpath(f"./hh:paraPr[@id='{CENTER_PARA_ID}']", namespaces={"hh": HH}):
-        source = cast(
-            etree._Element,
-            para_container.xpath(f"./hh:paraPr[@id='{LEFT_PARA_ID}']", namespaces={"hh": HH})[0],
-        )
-        centered = copy.deepcopy(source)
+        centered = copy.deepcopy(left_source)
         centered.set("id", CENTER_PARA_ID)
         align = cast(etree._Element, centered.xpath("./hh:align", namespaces={"hh": HH})[0])
         align.set("horizontal", "CENTER")
         para_container.append(centered)
+    for style_id, alignment in (
+        (READABLE_LEFT_PARA_ID, "LEFT"),
+        (READABLE_CENTER_PARA_ID, "CENTER"),
+    ):
+        if para_container.xpath(f"./hh:paraPr[@id='{style_id}']", namespaces={"hh": HH}):
+            continue
+        readable = copy.deepcopy(left_source)
+        readable.set("id", style_id)
+        readable.set("snapToGrid", "0")
+        align = cast(etree._Element, readable.xpath("./hh:align", namespaces={"hh": HH})[0])
+        align.set("horizontal", alignment)
+        for spacing in readable.xpath(".//hh:lineSpacing", namespaces={"hh": HH}):
+            spacing.set("type", "PERCENT")
+            spacing.set("value", "150")
+        para_container.append(readable)
     para_container.set("itemCnt", str(len(para_container)))
     char_container = char_containers[0]
     if not char_container.xpath(f"./hh:charPr[@id='{BOLD_CHAR_ID}']", namespaces={"hh": HH}):
@@ -280,9 +357,13 @@ def _install_ocr_text_styles(
     if len(sources) != 1:
         raise RuntimeError("regular HWPX character style is missing")
     heights = {
-        _ocr_style_key(block, page.height)[0]
+        style[0]
         for page in document.pages
         for block in page.blocks
+        for style in (
+            _ocr_style_key(block, page.height),
+            _ocr_style_key(block, page.height, scale=0.82),
+        )
         if str(block.text).strip()
     }
     keys = [(height, bold) for height in sorted(heights) for bold in (False, True)]
@@ -303,11 +384,11 @@ def _install_ocr_text_styles(
     return result
 
 
-def _ocr_style_key(block: Any, page_height: float) -> tuple[int, bool]:
+def _ocr_style_key(block: Any, page_height: float, *, scale: float = 1.0) -> tuple[int, bool]:
     y0 = float(block.bbox.pixel[1])
     y1 = float(block.bbox.pixel[3])
     points = (y1 - y0) / max(1.0, page_height) * 841.89
-    height = int(round(min(16.0, max(6.0, points)) * 2) * 50)
+    height = int(round(min(16.0, max(6.0, points * scale)) * 2) * 50)
     bold = str(block.kind) in {"instruction", "question", "title"} or height >= 1_200
     return height, bold
 
@@ -324,7 +405,8 @@ def _build_editable_backgrounds(
         zip(page_images, document.pages, layout_pages, strict=True), start=1
     ):
         with Image.open(page_path) as opened:
-            image = opened.convert("RGB")
+            source_rgb = np.asarray(opened.convert("RGB"), dtype=np.uint8)
+        image = Image.fromarray(preprocess_for_ocr(source_rgb).image)
         page_width, page_height = image.size
         image_regions = [
             _scale_region(item, float(page_width), float(page_height))
@@ -337,7 +419,7 @@ def _build_editable_backgrounds(
         array = np.asarray(image, dtype=np.uint8)
         draw = ImageDraw.Draw(image)
         for block in ir_page.blocks:
-            if not _eligible_editable_block(block, image_regions, table_regions):
+            if not _eligible_editable_block(block, image_regions, table_regions, page_height):
                 continue
             x0, y0, x1, y1 = _clamped_pixel_box(block.bbox.pixel, page_width, page_height)
             if x1 <= x0 or y1 <= y0:
@@ -353,9 +435,12 @@ def _eligible_editable_block(
     block: Any,
     image_regions: list[_ImageRegion],
     table_regions: list[_ImageRegion],
+    page_height: float,
 ) -> bool:
     text = str(block.text).strip()
     if not text or float(block.confidence) < EDITABLE_TEXT_CONFIDENCE:
+        return False
+    if getattr(block.annotation_state, "value", str(block.annotation_state)) != "printed":
         return False
     raw_bbox = block.bbox.pixel
     bbox = (
@@ -364,6 +449,15 @@ def _eligible_editable_block(
         float(raw_bbox[2]),
         float(raw_bbox[3]),
     )
+    kind = getattr(block.kind, "value", str(block.kind))
+    if kind == "page_number":
+        return False
+    if kind == "header" and bbox[3] - bbox[1] > (bbox[2] - bbox[0]) * 1.5:
+        return False
+    if kind == "footer" and (
+        bbox[1] >= page_height * 0.935 or ("정기시험" in text and "쪽" in text) or "저작권" in text
+    ):
+        return False
     return not any(
         _intersection_ratio(bbox, region.bbox) >= 0.35
         for region in [*image_regions, *table_regions]
@@ -548,6 +642,124 @@ def _build_text_box(
     return rectangle
 
 
+def _build_passage_text_box(
+    bbox: tuple[float, float, float, float],
+    blocks: list[Any],
+    page_width: int,
+    page_height: int,
+    ocr_text_styles: dict[tuple[int, bool], str],
+    *,
+    control_id: int,
+    z_order: int,
+) -> etree._Element:
+    ordered = sorted(
+        blocks,
+        key=lambda block: (float(block.bbox.pixel[1]), float(block.bbox.pixel[0])),
+    )
+    first_style = _ocr_style_key(ordered[0], page_height, scale=0.82)
+    rectangle = _build_text_box(
+        ordered[0],
+        page_width,
+        page_height,
+        char_style_id=ocr_text_styles[first_style],
+        control_id=control_id,
+        z_order=z_order,
+    )
+    x0, y0, x1, y1 = bbox
+    width = _x_hwp(max(2.0, x1 - x0), page_width)
+    height = _y_hwp(max(2.0, y1 - y0), page_height)
+    for name in ("orgSz", "curSz"):
+        size = cast(
+            etree._Element,
+            rectangle.xpath(f"./hp:{name}", namespaces={"hp": HP})[0],
+        )
+        size.set("width", str(width))
+        size.set("height", str(height))
+    rotation = cast(
+        etree._Element,
+        rectangle.xpath("./hp:rotationInfo", namespaces={"hp": HP})[0],
+    )
+    rotation.set("centerX", str(width // 2))
+    rotation.set("centerY", str(height // 2))
+    line = cast(
+        etree._Element,
+        rectangle.xpath("./hp:lineShape", namespaces={"hp": HP})[0],
+    )
+    line.set("color", "#5A5A5A")
+    line.set("width", "100")
+    line.set("style", "SOLID")
+    sublist = cast(
+        etree._Element,
+        rectangle.xpath("./hp:drawText/hp:subList", namespaces={"hp": HP})[0],
+    )
+    sublist.set("lineWrap", "BREAK")
+    sublist.set("vertAlign", "TOP")
+    sublist.set("textWidth", str(max(1, width - 700)))
+    sublist.set("textHeight", str(max(1, height - 500)))
+    for paragraph in sublist.xpath("./hp:p", namespaces={"hp": HP}):
+        sublist.remove(paragraph)
+    for block in ordered:
+        value = str(block.text).strip()
+        centered = re.fullmatch(r"-?\s*<보기>\s*", value) is not None
+        paragraph = etree.SubElement(
+            sublist,
+            f"{{{HP}}}p",
+            id="0",
+            paraPrIDRef=(READABLE_CENTER_PARA_ID if centered else READABLE_LEFT_PARA_ID),
+            styleIDRef="0",
+            pageBreak="0",
+            columnBreak="0",
+            merged="0",
+        )
+        height_key, inferred_bold = _ocr_style_key(block, page_height, scale=0.82)
+        run = etree.SubElement(
+            paragraph,
+            f"{{{HP}}}run",
+            charPrIDRef=ocr_text_styles[(height_key, centered or inferred_bold)],
+        )
+        text = etree.SubElement(run, f"{{{HP}}}t")
+        text.text = value
+    margin = cast(
+        etree._Element,
+        rectangle.xpath("./hp:drawText/hp:textMargin", namespaces={"hp": HP})[0],
+    )
+    for name, value in {
+        "left": "350",
+        "right": "350",
+        "top": "250",
+        "bottom": "250",
+    }.items():
+        margin.set(name, value)
+    for name, point_x, point_y in (
+        ("pt0", 0, 0),
+        ("pt1", width, 0),
+        ("pt2", width, height),
+        ("pt3", 0, height),
+    ):
+        point = cast(
+            etree._Element,
+            rectangle.xpath(f"./hc:{name}", namespaces={"hc": HC})[0],
+        )
+        point.set("x", str(point_x))
+        point.set("y", str(point_y))
+    shape_size = cast(
+        etree._Element,
+        rectangle.xpath("./hp:sz", namespaces={"hp": HP})[0],
+    )
+    shape_size.set("width", str(width))
+    shape_size.set("height", str(height))
+    position = cast(
+        etree._Element,
+        rectangle.xpath("./hp:pos", namespaces={"hp": HP})[0],
+    )
+    position.set("horzOffset", str(_x_hwp(x0, page_width)))
+    position.set("vertOffset", str(_y_hwp(y0, page_height)))
+    comments = rectangle.xpath("./hp:shapeComment", namespaces={"hp": HP})
+    if comments:
+        comments[0].text = "OCR 작품/보기 묶음 편집 글상자"
+    return rectangle
+
+
 def _build_table(
     template: etree._Element,
     grid: TableGrid,
@@ -584,6 +796,10 @@ def _build_table(
     position = cast(etree._Element, table.xpath("./hp:pos", namespaces={"hp": HP})[0])
     position.set("flowWithText", "0")
     position.set("allowOverlap", "1")
+    position.set("vertRelTo", "PAPER")
+    position.set("horzRelTo", "PAPER")
+    position.set("vertAlign", "TOP")
+    position.set("horzAlign", "LEFT")
     position.set("horzOffset", str(_x_hwp(x_lines[0], page_width)))
     position.set("vertOffset", str(_y_hwp(y_lines[0], page_height)))
     for row_index in range(grid.rows):
@@ -741,7 +957,10 @@ def _table_regions(page: dict[str, Any]) -> list[_ImageRegion]:
     height = float(page["height"])
     regions: list[_ImageRegion] = []
     for annotation in page.get("annotations", []):
-        if annotation.get("label") != "table" or float(annotation.get("confidence", 0)) < 0.45:
+        confidence = float(annotation.get("confidence", 0))
+        if annotation.get("label") != "table" or confidence < 0.45:
+            continue
+        if annotation.get("source") == "opencv_ruled_region" and confidence < 0.7:
             continue
         values = [float(value) for value in annotation["bbox"]]
         regions.append(
@@ -752,6 +971,97 @@ def _table_regions(page: dict[str, Any]) -> list[_ImageRegion]:
             )
         )
     return regions
+
+
+def _passage_regions(page: dict[str, Any]) -> list[_ImageRegion]:
+    width = float(page["width"])
+    height = float(page["height"])
+    regions: list[_ImageRegion] = []
+    for annotation in page.get("annotations", []):
+        confidence = float(annotation.get("confidence", 0))
+        fallback_box = (
+            annotation.get("label") == "table"
+            and annotation.get("source") == "opencv_ruled_region"
+            and confidence < 0.7
+        )
+        if (annotation.get("label") != "passage_box" and not fallback_box) or confidence < 0.45:
+            continue
+        values = [float(value) for value in annotation["bbox"]]
+        regions.append(
+            _ImageRegion(
+                bbox=(values[0], values[1], values[2], values[3]),
+                source_width=width,
+                source_height=height,
+            )
+        )
+    return regions
+
+
+def _passage_groups(
+    blocks: list[Any],
+    regions: list[_ImageRegion],
+    image_regions: list[_ImageRegion],
+    table_regions: list[_ImageRegion],
+    page_width: int,
+    page_height: int,
+) -> list[tuple[_ImageRegion, list[Any]]]:
+    candidates = [
+        region
+        for region in regions
+        if region.bbox[2] - region.bbox[0] >= page_width * 0.22
+        and region.bbox[3] - region.bbox[1] >= page_height * 0.045
+        and region.bbox[1] >= page_height * 0.09
+        and region.bbox[3] <= page_height * 0.95
+        and not any(_intersection_ratio(region.bbox, table.bbox) >= 0.5 for table in table_regions)
+    ]
+    candidates.sort(
+        key=lambda region: (region.bbox[2] - region.bbox[0]) * (region.bbox[3] - region.bbox[1]),
+        reverse=True,
+    )
+    deduplicated: list[_ImageRegion] = []
+    for region in candidates:
+        if any(_intersection_ratio(region.bbox, kept.bbox) >= 0.65 for kept in deduplicated):
+            continue
+        deduplicated.append(region)
+
+    eligible = [
+        block
+        for block in blocks
+        if _eligible_editable_block(block, image_regions, table_regions, page_height)
+    ]
+    assigned: set[str] = set()
+    result: list[tuple[_ImageRegion, list[Any]]] = []
+    for region in deduplicated:
+        x0, y0, x1, y1 = region.bbox
+        selected = []
+        for block in eligible:
+            if str(block.id) in assigned:
+                continue
+            bx0, by0, bx1, by1 = (float(value) for value in block.bbox.pixel)
+            center_x = (bx0 + bx1) / 2
+            center_y = (by0 + by1) / 2
+            if x0 - 8 <= center_x <= x1 + 8 and y0 - 8 <= center_y <= y1 + 8:
+                selected.append(block)
+        headings = [
+            block
+            for block in eligible
+            if str(block.id) not in assigned
+            and re.fullmatch(r"-?\s*<보기>\s*", str(block.text).strip()) is not None
+            and x0 <= (float(block.bbox.pixel[0]) + float(block.bbox.pixel[2])) / 2 <= x1
+            and 0 <= y0 - float(block.bbox.pixel[3]) <= page_height * 0.06
+        ]
+        selected.extend(block for block in headings if block not in selected)
+        if not selected or sum(len(str(block.text).strip()) for block in selected) < 8:
+            continue
+        adjusted_y0 = min([y0, *(float(block.bbox.pixel[1]) - 8 for block in headings)])
+        adjusted = _ImageRegion(
+            bbox=(x0, max(0.0, adjusted_y0), x1, y1),
+            source_width=region.source_width,
+            source_height=region.source_height,
+        )
+        assigned.update(str(block.id) for block in selected)
+        result.append((adjusted, selected))
+    return result
 
 
 def _align_grid_to_seed(grid: TableGrid, regions: list[_ImageRegion]) -> TableGrid:
@@ -798,15 +1108,13 @@ def _scale_region(region: _ImageRegion, width: float, height: float) -> _ImageRe
 
 
 def _crop_image(
-    path: Path, bbox: tuple[float, float, float, float]
+    image: Image.Image, bbox: tuple[float, float, float, float]
 ) -> tuple[bytes, tuple[int, int]]:
-    with Image.open(path) as source:
-        image = source.convert("RGB")
-        x0, y0, x1, y1 = (round(value) for value in bbox)
-        crop = image.crop((x0, y0, x1, y1))
-        stream = io.BytesIO()
-        crop.save(stream, "JPEG", quality=94, optimize=True)
-        return stream.getvalue(), crop.size
+    x0, y0, x1, y1 = (round(value) for value in bbox)
+    crop = image.crop((x0, y0, x1, y1))
+    stream = io.BytesIO()
+    crop.save(stream, "JPEG", quality=94, optimize=True)
+    return stream.getvalue(), crop.size
 
 
 def _build_picture(
@@ -856,6 +1164,10 @@ def _build_picture(
     position = cast(etree._Element, picture.xpath("./hp:pos", namespaces={"hp": HP})[0])
     position.set("flowWithText", "0")
     position.set("allowOverlap", "1")
+    position.set("vertRelTo", "PAPER")
+    position.set("horzRelTo", "PAPER")
+    position.set("vertAlign", "TOP")
+    position.set("horzAlign", "LEFT")
     position.set("horzOffset", str(_x_hwp(x0, page_width)))
     position.set("vertOffset", str(_y_hwp(y0, page_height)))
     comments = picture.xpath("./hp:shapeComment", namespaces={"hp": HP})

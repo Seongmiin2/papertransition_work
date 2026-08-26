@@ -30,7 +30,9 @@ def preprocess_for_ocr(image_rgb: NDArray[np.uint8]) -> PreprocessResult:
     expanded = cv2.dilate(mask, np.ones((3, 3), np.uint8)) > 0
     overlap = float(np.logical_and(expanded, print_ink).sum()) / max(1, int(expanded.sum()))
     cleaned = image_rgb.copy()
-    cleaned[mask > 0] = 255
+    # Also clear the anti-aliased edge around pen strokes.  Leaving that one-pixel
+    # halo was enough for OCR to turn a red circle beside a question into "7.".
+    cleaned[expanded] = 255
     return PreprocessResult(
         image=cleaned,
         annotation_mask=mask,

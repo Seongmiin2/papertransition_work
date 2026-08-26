@@ -94,7 +94,36 @@ def prepare_training_corpus(
                 {"path": str(source.resolve()), "error": f"{type(exc).__name__}: {exc}"}
             )
 
-    declared_pairs = [evaluate_declared_pair(pair) for pair in configured_pairs]
+    declared_pairs: list[dict[str, Any]] = []
+    for pair in configured_pairs:
+        try:
+            declared_pairs.append(evaluate_declared_pair(pair))
+        except Exception as exc:  # noqa: BLE001 - isolate one invalid declared pair
+            pair_id = str(pair.get("id", "unknown"))
+            error = f"{type(exc).__name__}: {exc}"
+            declared_pairs.append(
+                {
+                    "id": pair_id,
+                    "kind": "declared_scan_transcript_editable",
+                    "source_pdf": str(pair.get("source_pdf", "")),
+                    "transcript_pdf": str(pair.get("transcript_pdf", "")),
+                    "editable_target": str(pair.get("editable_target", "")),
+                    "split": str(pair.get("split", "test")),
+                    "status": "invalid",
+                    "use_for": list(pair.get("use_for", [])),
+                    "geometry_target": bool(pair.get("geometry_target", False)),
+                    "checks": {
+                        "visual_relationship_declared": bool(
+                            pair.get("visually_verified", False)
+                        ),
+                        "transcript_editable_content_verified": False,
+                        "held_out_from_training": str(pair.get("split", "test")) == "test",
+                    },
+                    "error": error,
+                    "notes": list(pair.get("notes", [])),
+                }
+            )
+            failures.append({"path": f"configured_pair:{pair_id}", "error": error})
     candidate_pairs = _find_filename_pairs(items)
     _write_jsonl(destination / "manifest.jsonl", items)
     _write_jsonl(destination / "pairs.jsonl", [*declared_pairs, *candidate_pairs])
@@ -253,8 +282,6 @@ def _load_pair_config(path: Path | None, root: Path) -> list[dict[str, Any]]:
         item = dict(raw)
         for key in ("source_pdf", "transcript_pdf", "editable_target"):
             resolved = (root / str(item[key])).resolve()
-            if not resolved.is_file():
-                raise FileNotFoundError(f"configured pair file does not exist: {resolved}")
             item[key] = str(resolved)
         result.append(item)
     return result

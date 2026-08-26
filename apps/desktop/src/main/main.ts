@@ -78,9 +78,7 @@ async function processQueue(): Promise<void> {
     job = publish(database.transition(id, "OCR", { progress: 0.1 }));
     const projectRoot = app.getAppPath();
     const venvPython = join(projectRoot, ".venv", "Scripts", "python.exe");
-    if (!existsSync(venvPython)) {
-      throw new Error("변환 엔진이 준비되지 않았습니다. .venv\\Scripts\\python.exe를 찾지 못했습니다.");
-    }
+    const pythonExecutable = existsSync(venvPython) ? venvPython : "python";
     const workerPath = join(projectRoot, "src");
     const pageAnomalyModel = join(projectRoot, "output", "trained-models", "page-anomaly-v1", "page_anomaly_linear_autoencoder.npz");
     const workerEnv = {
@@ -89,7 +87,7 @@ async function processQueue(): Promise<void> {
       PYTHONUTF8: "1"
     };
     let workerStderr = "";
-    const child = spawn(venvPython, ["-m", "scan2hwpx.worker"], {
+    const child = spawn(pythonExecutable, ["-m", "scan2hwpx.worker"], {
       cwd: projectRoot,
       env: workerEnv,
       stdio: ["pipe", "pipe", "pipe"]
@@ -141,7 +139,7 @@ async function processQueue(): Promise<void> {
       }
       void processQueue();
     });
-    child.stdin.write(JSON.stringify({ protocol_version: "1.0", request_id: randomUUID(), method: "convert", params: { job_id: id, input_pdf: staged, work_dir: root, options: { remove_red_marks: true, ocr_provider: "local", layout: "exam_auto", mode: "fast", dpi: 240, device: "auto", renderer: "semantic", page_anomaly_model: existsSync(pageAnomalyModel) ? pageAnomalyModel : null } } }) + "\n");
+    child.stdin.write(JSON.stringify({ protocol_version: "1.0", request_id: randomUUID(), method: "convert", params: { job_id: id, input_pdf: staged, work_dir: root, options: { remove_red_marks: true, ocr_provider: "local", layout: "exam_auto", mode: "fast", dpi: 120, device: "auto", renderer: "editable", page_anomaly_model: existsSync(pageAnomalyModel) ? pageAnomalyModel : null } } }) + "\n");
     child.stdin.end();
   } catch (error) {
     publish(database.transition(id, "FAILED", { errorMessage: error instanceof Error ? error.message : String(error) }));
