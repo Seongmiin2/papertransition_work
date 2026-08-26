@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { JobRecord } from "../types/contracts";
 
+const MAX_BATCH_FILES = 10;
+
 export function App() {
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [pending, setPending] = useState<string[]>([]);
@@ -13,14 +15,14 @@ export function App() {
     return next;
   });
   useEffect(() => { void refresh(); return window.exam2hwpx.onJobEvent(upsertJob); }, []);
-  const add = (paths: string[]) => setPending((old) => [...new Set([...old, ...paths.filter((p) => p.toLowerCase().endsWith(".pdf"))])]);
+  const add = (paths: string[]) => setPending((old) => [...new Set([...old, ...paths.filter((p) => p.toLowerCase().endsWith(".pdf"))])].slice(0, MAX_BATCH_FILES));
   const start = async () => { if (!pending.length) return; await window.exam2hwpx.enqueue(pending); setPending([]); await refresh(); };
   return <div className="shell">
     <aside><div className="brand"><span>문</span> Exam2HWPX</div><nav><button className="active">＋ 새 변환</button><button>작업 기록</button><button>모델 관리</button><button>설정</button></nav><small>로컬 처리 · 개인정보 보호</small></aside>
     <main>
       <header><div><h1>시험지 PDF를 편집 가능한 한글로</h1><p>파일은 이 컴퓨터에서 처리되며 외부로 전송되지 않습니다.</p></div><div className="local">● 로컬 OCR</div></header>
       <section className="card drop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add([...e.dataTransfer.files].map((f) => window.exam2hwpx.getPathForFile(f))); }}>
-        <div className="fileIcon">PDF</div><h2>PDF를 여기에 끌어다 놓으세요</h2><p>여러 시험지를 한 번에 추가할 수 있습니다.</p>
+        <div className="fileIcon">PDF</div><h2>PDF를 여기에 끌어다 놓으세요</h2><p>한 번에 최대 10개까지 추가할 수 있습니다.</p>
         <button className="secondary" onClick={async () => add(await window.exam2hwpx.selectPdfs())}>파일 선택</button>
       </section>
       {pending.length > 0 && <section className="card"><h2>변환할 파일 <em>{pending.length}</em></h2>{pending.map((p) => <div className="pending" key={p}><span>PDF</span><div><b>{p.split(/[\\/]/).pop()}</b><small>{p}</small></div><button onClick={() => setPending(pending.filter((x) => x !== p))}>삭제</button></div>)}<div className="actions"><label><input type="checkbox" defaultChecked /> 빨간 채점 표시 제거</label><button className="primary" onClick={() => void start()}>HWPX 변환 시작</button></div></section>}

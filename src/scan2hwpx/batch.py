@@ -27,6 +27,7 @@ def convert_directory(
     resume: bool = True,
     renderer: str = "fidelity",
     device: str = "auto",
+    recognition_model_dir: Path | None = None,
     page_anomaly_model: Path | None = None,
     progress: BatchProgress | None = None,
 ) -> dict[str, Any]:
@@ -40,6 +41,7 @@ def convert_directory(
         fusion_mode=fusion_mode,
         lexicon_path=lexicon_path,
         device=device,
+        recognition_model_dir=recognition_model_dir,
         page_anomaly_model=page_anomaly_model,
     )
     settings = {
@@ -47,6 +49,12 @@ def convert_directory(
         "fusion_mode": fusion_mode,
         "renderer": renderer,
         "device": provider.device,
+        "recognition_model_dir": str(recognition_model_dir.resolve())
+        if recognition_model_dir
+        else None,
+        "recognition_model_sha256": _sha256(recognition_model_dir / "inference.pdiparams")
+        if recognition_model_dir and (recognition_model_dir / "inference.pdiparams").is_file()
+        else None,
         "page_anomaly_model": str(page_anomaly_model.resolve()) if page_anomaly_model else None,
         "lexicon_sha256": _sha256(lexicon_path)
         if lexicon_path and lexicon_path.is_file()
@@ -87,6 +95,7 @@ def convert_directory(
                 fusion_mode,
                 lexicon_path,
                 provider.device,
+                recognition_model_dir,
                 page_anomaly_model,
             ),
         ) as executor:
@@ -164,6 +173,7 @@ def _init_worker(
     fusion_mode: str,
     lexicon_path: Path | None,
     device: str,
+    recognition_model_dir: Path | None,
     page_anomaly_model: Path | None,
 ) -> None:
     global _WORKER_PROVIDER
@@ -172,6 +182,7 @@ def _init_worker(
         fusion_mode=fusion_mode,
         lexicon_path=lexicon_path,
         device=device,
+        recognition_model_dir=recognition_model_dir,
         page_anomaly_model=page_anomaly_model,
     )
 

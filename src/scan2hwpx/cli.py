@@ -29,6 +29,7 @@ def _parser() -> argparse.ArgumentParser:
         default="fidelity",
     )
     convert.add_argument("--device", default="auto", help="auto, cpu, gpu:0, ...")
+    convert.add_argument("--recognition-model-dir", type=Path)
     convert.add_argument("--page-anomaly-model", type=Path)
     validate = commands.add_parser("validate")
     validate.add_argument("input", type=Path)
@@ -82,6 +83,7 @@ def _parser() -> argparse.ArgumentParser:
         default="fidelity",
     )
     batch.add_argument("--device", default="auto", help="auto, cpu, gpu:0, ...")
+    batch.add_argument("--recognition-model-dir", type=Path)
     batch.add_argument("--page-anomaly-model", type=Path)
     verified = commands.add_parser(
         "import-ocr-labels",
@@ -251,6 +253,7 @@ def main() -> int:
             resume=not args.no_resume,
             renderer=args.renderer,
             device=args.device,
+            recognition_model_dir=args.recognition_model_dir,
             page_anomaly_model=args.page_anomaly_model,
             progress=print,
         )
@@ -376,6 +379,7 @@ def main() -> int:
                 fusion_mode=args.mode,
                 lexicon_path=_default_lexicon(args.lexicon),
                 device=args.device,
+                recognition_model_dir=args.recognition_model_dir,
                 page_anomaly_model=args.page_anomaly_model,
             ),
             renderer=args.renderer,

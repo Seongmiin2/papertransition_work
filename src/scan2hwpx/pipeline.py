@@ -64,6 +64,7 @@ def convert_pdf(
         formula_processor=formula_processor,
         progress=progress,
         write_diagnostics=write_diagnostics,
+        write_page_images=renderer in {"fidelity", "semantic", "editable"},
     )
     document = provider.convert(input_path, report, page_callback=page_processor.process)
     streamed = page_processor.handled_all(document.pages)
@@ -110,6 +111,7 @@ def convert_pdf(
             layout_dir,
             device=provider.device,
             dpi=min(dpi, 200),
+            page_images=page_images,
         )
         semantic_stats = render_semantic_hwpx(
             page_images,

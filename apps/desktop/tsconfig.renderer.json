@@ -10,7 +10,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
-    "noEmit": true
+    "noEmit": true,
+    "tsBuildInfoFile": "../../dist-renderer/tsconfig.renderer.tsbuildinfo"
   },
   "include": ["src/renderer", "src/types"]
 }

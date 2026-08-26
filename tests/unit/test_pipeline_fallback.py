@@ -125,3 +125,37 @@ def test_convert_pdf_can_skip_batch_diagnostics(tmp_path: Path, monkeypatch: obj
     assert not (tmp_path / "debug" / "preprocessed").exists()
     assert not (tmp_path / "debug" / "ocr_overlay").exists()
     assert not (tmp_path / "review.html").exists()
+
+
+def test_clean_renderer_skips_page_images_without_diagnostics(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
+    page = document.pages[0]
+    page.page_no = 2
+    image = np.full((351, 248, 3), 255, dtype=np.uint8)
+    preprocessed = preprocess_for_ocr(image)
+
+    def fake_convert(
+        _self: object,
+        _path: Path,
+        _progress: object = None,
+        *,
+        page_callback: object = None,
+    ) -> object:
+        assert callable(page_callback)
+        page_callback(0, 1, page, image, preprocessed)
+        return document
+
+    monkeypatch.setattr(pipeline.PaddlePdfOcrProvider, "convert", fake_convert)  # type: ignore[attr-defined]
+    output = tmp_path / "result.hwpx"
+
+    pipeline.convert_pdf(
+        tmp_path / "input.pdf",
+        output,
+        renderer="portable",
+        write_diagnostics=False,
+    )
+
+    assert output.is_file()
+    assert not (tmp_path / "debug").exists()

@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "model_id": "korean-exam-ppocrv5-20260826-v2",
+  "base_model": "korean_PP-OCRv5_mobile_rec",
+  "paddleocr_commit": "2661c7c0ef5c613e8f93c6e93b2e052399f0f854",
+  "dataset": {
+    "builder": "scripts/build_hwp_line_dataset.py",
+    "split_seed": 20260826,
+    "train_documents": 33,
+    "validation_documents": 4,
+    "test_documents": 4,
+    "train_lines": 30309,
+    "validation_lines": 3392,
+    "test_lines": 2921
+  },
+  "training": {
+    "continued_from": "korean-exam-ppocrv5-20260826",
+    "epochs": 6,
+    "batch_size": 32,
+    "learning_rate": 0.00002,
+    "warmup_epochs": 1
+  },
+  "metrics": {
+    "validation_exact_accuracy": 0.9443452353,
+    "validation_normalized_edit_distance": 0.9816574903,
+    "test_exact_accuracy": 0.9557005462,
+    "test_normalized_edit_distance": 0.9815295938
+  },
+  "artifact": {
+    "local_directory": "models/korean-exam-ppocrv5",
+    "weights": "inference.pdiparams",
+    "sha256": "bdcc257f9b9a1d4caf1f1ac6791e5b3ab981c990bf61177344fd2ed6e4fe716d"
+  }
+}

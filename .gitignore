@@ -11,7 +11,12 @@ __pycache__/
 .env
 output/
 test_data/
-models/
+models/*
+!models/korean-exam-ppocrv5/
+models/korean-exam-ppocrv5/*
+!models/korean-exam-ppocrv5/inference.json
+!models/korean-exam-ppocrv5/inference.pdiparams
+!models/korean-exam-ppocrv5/inference.yml
 P고2/
 files (1)/
 exchange/
@@ -28,3 +33,6 @@ review_crops/
 github_publish/
 *.lnk
 /output.hwpx
+/.claude/
+/고1-2/
+/고2/

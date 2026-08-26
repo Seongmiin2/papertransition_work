@@ -7,9 +7,14 @@ import sys
 import traceback
 import uuid
 from pathlib import Path
-from typing import Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
+
+if TYPE_CHECKING:
+    from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
 
 PROTOCOL_VERSION = "1.0"
+_PROVIDER: PaddlePdfOcrProvider | None = None
+_PROVIDER_SETTINGS: tuple[int, str, str, str | None, str | None] | None = None
 
 
 def emit(request_id: str, event: str, data: dict[str, Any]) -> None:
@@ -22,6 +27,35 @@ def emit(request_id: str, event: str, data: dict[str, Any]) -> None:
     output = sys.__stdout__ or sys.stdout
     output.write(json.dumps(payload, ensure_ascii=False) + "\n")
     output.flush()
+
+
+def _provider_for(
+    dpi: int,
+    fusion_mode: str,
+    device: str,
+    recognition_model_dir: Path | None,
+    page_anomaly_model: Path | None,
+) -> PaddlePdfOcrProvider:
+    global _PROVIDER, _PROVIDER_SETTINGS
+    settings = (
+        dpi,
+        fusion_mode,
+        device,
+        str(recognition_model_dir) if recognition_model_dir else None,
+        str(page_anomaly_model) if page_anomaly_model else None,
+    )
+    if _PROVIDER is None or _PROVIDER_SETTINGS != settings:
+        from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
+
+        _PROVIDER = PaddlePdfOcrProvider(
+            dpi=dpi,
+            fusion_mode=fusion_mode,
+            device=device,
+            recognition_model_dir=recognition_model_dir,
+            page_anomaly_model=page_anomaly_model,
+        )
+        _PROVIDER_SETTINGS = settings
+    return _PROVIDER
 
 
 def handle(request: dict[str, Any]) -> None:
@@ -48,6 +82,9 @@ def handle(request: dict[str, Any]) -> None:
     fusion_mode = str(options.get("mode", "fast"))
     device = str(options.get("device", "auto"))
     renderer = str(options.get("renderer", "fidelity"))
+    write_diagnostics = bool(options.get("write_diagnostics", True))
+    recognition_value = options.get("recognition_model_dir")
+    recognition_model_dir = Path(str(recognition_value)).resolve() if recognition_value else None
     anomaly_value = options.get("page_anomaly_model")
     page_anomaly_model = Path(str(anomaly_value)).resolve() if anomaly_value else None
 
@@ -55,22 +92,27 @@ def handle(request: dict[str, Any]) -> None:
         emit(request_id, "progress", {"stage": "OCR", "message": message})
 
     with contextlib.redirect_stdout(sys.stderr):
-        from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
-
-        provider = PaddlePdfOcrProvider(
-            dpi=dpi,
-            fusion_mode=fusion_mode,
-            device=device,
-            page_anomaly_model=page_anomaly_model,
+        provider = _provider_for(
+            dpi,
+            fusion_mode,
+            device,
+            recognition_model_dir,
+            page_anomaly_model,
         )
-        result = convert_pdf(
-            source,
-            output,
-            dpi=dpi,
-            progress=progress,
-            ocr_provider=provider,
-            renderer=renderer,
-        )
+        try:
+            result = convert_pdf(
+                source,
+                output,
+                dpi=dpi,
+                progress=progress,
+                ocr_provider=provider,
+                renderer=renderer,
+                write_diagnostics=write_diagnostics,
+            )
+        finally:
+            if not write_diagnostics:
+                for directory in (output_dir / "debug", output_dir / "layout_training"):
+                    shutil.rmtree(directory, ignore_errors=True)
     emit(request_id, "completed", {"output_path": str(output), **result})
 
 

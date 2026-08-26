@@ -78,13 +78,15 @@ def build_layout_seed_dataset(
     device: str = "auto",
     dpi: int = 200,
     threshold: float = 0.3,
+    page_images: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Create reviewable exam-layout seed labels; these are not verified training truth."""
-    image_dir = output_dir / "images"
     overlay_dir = output_dir / "overlays"
-    image_dir.mkdir(parents=True, exist_ok=True)
     overlay_dir.mkdir(parents=True, exist_ok=True)
-    page_images = _rasterize_pdf(input_pdf, image_dir, dpi)
+    if page_images is None:
+        image_dir = output_dir / "images"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        page_images = _rasterize_pdf(input_pdf, image_dir, dpi)
 
     from paddleocr import LayoutDetection  # type: ignore[import-untyped]
 
