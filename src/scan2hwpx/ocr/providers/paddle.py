@@ -158,31 +158,36 @@ class PaddlePdfOcrProvider:
                 layout_summaries.append(layout.summary())
                 mask_ratios.append(preprocessed.annotation_ratio)
                 mask_risks.append(preprocessed.text_overlap_risk)
-                results = self._predict(preprocessed.image)
-                payload = results[0].json if results else {}
-                raw_data = payload.get("res", payload) if isinstance(payload, dict) else {}
-                data = raw_data if isinstance(raw_data, dict) else {}
-                engine_name = "paddleocr"
-                if os.name == "nt" and self.fusion_mode != "fast":
-                    try:
-                        from scan2hwpx.ocr.providers.windows import (
-                            recognize_windows_image,
-                            recognize_windows_regions,
-                        )
-
-                        if self.fusion_mode == "accurate":
-                            windows_lines = recognize_windows_image(preprocessed.image)
-                        else:
-                            windows_lines = recognize_windows_regions(
-                                preprocessed.image, self._secondary_regions(data)
+                text_layer_data = _text_layer_page_data(page, self.dpi)
+                if text_layer_data is not None:
+                    data = text_layer_data
+                    engine_name = "pdf-text-layer"
+                else:
+                    results = self._predict(preprocessed.image)
+                    payload = results[0].json if results else {}
+                    raw_data = payload.get("res", payload) if isinstance(payload, dict) else {}
+                    data = raw_data if isinstance(raw_data, dict) else {}
+                    engine_name = "paddleocr"
+                    if os.name == "nt" and self.fusion_mode != "fast":
+                        try:
+                            from scan2hwpx.ocr.providers.windows import (
+                                recognize_windows_image,
+                                recognize_windows_regions,
                             )
-                    except (ImportError, OSError, RuntimeError, ValueError):
-                        windows_lines = []
-                    if windows_lines:
-                        data = self._fuse_recognition(
-                            data, windows_lines, quality_router=self.quality_router
-                        )
-                        engine_name = f"paddle+windows-ocr-ko:{self.fusion_mode}"
+
+                            if self.fusion_mode == "accurate":
+                                windows_lines = recognize_windows_image(preprocessed.image)
+                            else:
+                                windows_lines = recognize_windows_regions(
+                                    preprocessed.image, self._secondary_regions(data)
+                                )
+                        except (ImportError, OSError, RuntimeError, ValueError):
+                            windows_lines = []
+                        if windows_lines:
+                            data = self._fuse_recognition(
+                                data, windows_lines, quality_router=self.quality_router
+                            )
+                            engine_name = f"paddle+windows-ocr-ko:{self.fusion_mode}"
                 engines.append(engine_name)
                 parsed_page = self._page_from_result(
                     page_index + 1,
@@ -447,6 +452,35 @@ def _polygon_bounds(polygon: Any) -> tuple[float, float, float, float]:
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
     return min(xs), min(ys), max(xs), max(ys)
+
+
+def _text_layer_page_data(page: Any, dpi: int, min_characters: int = 20) -> dict[str, Any] | None:
+    """Build a PaddleOCR-shaped result dict straight from a PDF's own text layer.
+
+    Returns None when the page has no real (born-digital) text layer worth trusting,
+    so the caller falls back to rasterize+OCR. Coordinates are scaled by dpi/72 to
+    match the pixel space of the page image rasterized at the same dpi.
+    """
+    if len(page.get_text().strip()) < min_characters:
+        return None
+    scale = dpi / 72
+    rec_texts: list[str] = []
+    rec_scores: list[float] = []
+    rec_polys: list[list[tuple[float, float]]] = []
+    for block in page.get_text("dict").get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            line_text = "".join(span.get("text", "") for span in line.get("spans", []))
+            if not line_text.strip():
+                continue
+            x0, y0, x1, y1 = line.get("bbox", (0.0, 0.0, 0.0, 0.0))
+            rec_texts.append(line_text)
+            rec_scores.append(1.0)
+            rec_polys.append([(x0 * scale, y0 * scale), (x1 * scale, y1 * scale)])
+    if not rec_texts:
+        return None
+    return {"rec_texts": rec_texts, "rec_scores": rec_scores, "rec_polys": rec_polys}
 
 
 def _sha256(path: Path) -> str:
