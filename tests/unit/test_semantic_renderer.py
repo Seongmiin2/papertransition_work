@@ -110,7 +110,9 @@ def test_editable_renderer_keeps_pages_without_source_backgrounds(tmp_path: Path
         assert "BinData/image2.jpg" not in archive.namelist()
 
 
-def test_editable_renderer_groups_passage_lines_in_one_readable_box(tmp_path: Path) -> None:
+def test_editable_renderer_keeps_passage_lines_at_source_positions_inside_outline(
+    tmp_path: Path,
+) -> None:
     image_path = tmp_path / "page-1.png"
     Image.new("RGB", (1000, 1400), "white").save(image_path)
     document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
@@ -165,8 +167,66 @@ def test_editable_renderer_groups_passage_lines_in_one_readable_box(tmp_path: Pa
         assert len(boxed) == 1
         assert not section.xpath("//*[local-name()='tbl']")
         paragraphs = boxed[0].xpath(".//*[local-name()='subList']/*[local-name()='p']")
-        assert [paragraph.get("paraPrIDRef") for paragraph in paragraphs] == ["22", "21"]
-        spacing = header.xpath(
-            "//*[local-name()='paraPr'][@id='21']//*[local-name()='lineSpacing']"
+        assert len(paragraphs) == 1
+        assert not boxed[0].xpath(".//*[local-name()='t']/text()")
+        positioned_text = section.xpath(
+            "//*[local-name()='rect'][./*[local-name()='lineShape'][@style='NONE']]"
+            "//*[local-name()='t']/text()"
         )
-        assert spacing[0].get("value") == "150"
+        assert "<보기>" in positioned_text
+        assert "작품의 첫 번째 본문 줄" in positioned_text
+        wraps = section.xpath(
+            "//*[local-name()='rect']/*[local-name()='drawText']/*[local-name()='subList']"
+        )
+        assert {item.get("lineWrap") for item in wraps} == {"BREAK"}
+        style_ids = [
+            int(style.get("id"))
+            for style in header.xpath(
+                "//*[local-name()='charProperties']/*[local-name()='charPr']"
+            )
+        ]
+        assert style_ids == list(range(len(style_ids)))
+
+
+def test_editable_renderer_rejects_cross_column_passage_outline(tmp_path: Path) -> None:
+    image_path = tmp_path / "page-1.png"
+    Image.new("RGB", (1000, 1400), "white").save(image_path)
+    document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
+    layout_seed = tmp_path / "layout_seed.json"
+    layout_seed.write_text(
+        json.dumps(
+            {
+                "pages": [
+                    {
+                        "page_no": 1,
+                        "width": 1000,
+                        "height": 1400,
+                        "annotations": [
+                            {
+                                "label": "passage_box",
+                                "confidence": 0.5,
+                                "source": "opencv_ruled_region",
+                                "bbox": [50, 200, 950, 900],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "cross-column.hwpx"
+
+    render_semantic_hwpx(
+        [image_path],
+        document,
+        layout_seed,
+        output,
+        include_page_backgrounds=False,
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        section = etree.fromstring(archive.read("Contents/section0.xml"))
+        assert not section.xpath(
+            "//*[local-name()='rect'][./*[local-name()='lineShape'][@style='SOLID']]"
+        )

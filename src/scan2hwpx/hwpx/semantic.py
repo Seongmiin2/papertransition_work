@@ -31,7 +31,6 @@ CENTER_PARA_ID = "20"
 LEFT_PARA_ID = "11"
 BOLD_CHAR_ID = "7"
 REGULAR_CHAR_ID = "2"
-OCR_CHAR_STYLE_START = 100
 EDITABLE_TEXT_CONFIDENCE = 0.75
 READABLE_LEFT_PARA_ID = "21"
 READABLE_CENTER_PARA_ID = "22"
@@ -148,9 +147,8 @@ def render_semantic_hwpx(
             page_width,
             page_height,
         )
-        grouped_block_ids: set[str] = set()
         for passage_index, (region, passage_blocks) in enumerate(passage_groups, start=1):
-            passage = _build_passage_text_box(
+            passage = _build_passage_outline(
                 region.bbox,
                 passage_blocks,
                 page_width,
@@ -160,9 +158,7 @@ def render_semantic_hwpx(
                 z_order=500 + editable_text_boxes,
             )
             _append_control(paragraphs[page_index - 1], passage)
-            grouped_block_ids.update(str(block.id) for block in passage_blocks)
             editable_text_boxes += 1
-            editable_text_characters += sum(len(str(block.text)) for block in passage_blocks)
         clean_page: Image.Image | None = None
         if scaled_images:
             with Image.open(page_path) as opened:
@@ -191,11 +187,11 @@ def render_semantic_hwpx(
         if clean_page is not None:
             clean_page.close()
         for block_index, block in enumerate(ir_page.blocks, start=1):
-            if str(block.id) in grouped_block_ids or not _eligible_editable_block(
+            if not _eligible_editable_block(
                 block, scaled_images, table_regions, page_height
             ):
                 continue
-            style_key = _ocr_style_key(block, ir_page.height)
+            style_key = _editable_style_key(block, ir_page, ir_page.width)
             text_box = _build_text_box(
                 block,
                 page_width,
@@ -203,6 +199,7 @@ def render_semantic_hwpx(
                 char_style_id=ocr_text_styles[style_key],
                 control_id=1_500_000_000 + page_index * 10_000 + block_index,
                 z_order=1_000 + editable_text_boxes,
+                right_boundary=_editable_right_boundary(block, ir_page, page_width),
             )
             _append_control(paragraphs[page_index - 1], text_box)
             editable_text_boxes += 1
@@ -362,14 +359,16 @@ def _install_ocr_text_styles(
         for block in page.blocks
         for style in (
             _ocr_style_key(block, page.height),
+            _editable_style_key(block, page, page.width),
             _ocr_style_key(block, page.height, scale=0.82),
         )
         if str(block.text).strip()
     }
     keys = [(height, bold) for height in sorted(heights) for bold in (False, True)]
     result: dict[tuple[int, bool], str] = {}
+    next_style_id = max(int(style.get("id", "-1")) for style in container) + 1
     for index, (height, bold) in enumerate(keys):
-        style_id = str(OCR_CHAR_STYLE_START + index)
+        style_id = str(next_style_id + index)
         style = copy.deepcopy(sources[0])
         style.set("id", style_id)
         style.set("height", str(height))
@@ -505,9 +504,12 @@ def _build_text_box(
     char_style_id: str,
     control_id: int,
     z_order: int,
+    right_boundary: float | None = None,
 ) -> etree._Element:
     x0, y0, x1, y1 = (float(value) for value in block.bbox.pixel)
-    width = _x_hwp(max(2.0, x1 - x0 + 3.0), page_width)
+    padding = max(12.0, (x1 - x0) * 0.08)
+    expanded_x1 = right_boundary if right_boundary is not None else x1 + padding
+    width = _x_hwp(max(2.0, expanded_x1 - x0), page_width)
     height = _y_hwp(max(2.0, y1 - y0 + 2.0), page_height)
     rectangle = etree.Element(f"{{{HP}}}rect")
     for name, value in {
@@ -585,7 +587,7 @@ def _build_text_box(
         f"{{{HP}}}subList",
         id="",
         textDirection="HORIZONTAL",
-        lineWrap="SQUEEZE",
+        lineWrap="BREAK",
         vertAlign="CENTER",
         linkListIDRef="0",
         linkListNextIDRef="0",
@@ -642,7 +644,7 @@ def _build_text_box(
     return rectangle
 
 
-def _build_passage_text_box(
+def _build_passage_outline(
     bbox: tuple[float, float, float, float],
     blocks: list[Any],
     page_width: int,
@@ -696,29 +698,12 @@ def _build_passage_text_box(
     sublist.set("vertAlign", "TOP")
     sublist.set("textWidth", str(max(1, width - 700)))
     sublist.set("textHeight", str(max(1, height - 500)))
-    for paragraph in sublist.xpath("./hp:p", namespaces={"hp": HP}):
-        sublist.remove(paragraph)
-    for block in ordered:
-        value = str(block.text).strip()
-        centered = re.fullmatch(r"-?\s*<보기>\s*", value) is not None
-        paragraph = etree.SubElement(
-            sublist,
-            f"{{{HP}}}p",
-            id="0",
-            paraPrIDRef=(READABLE_CENTER_PARA_ID if centered else READABLE_LEFT_PARA_ID),
-            styleIDRef="0",
-            pageBreak="0",
-            columnBreak="0",
-            merged="0",
-        )
-        height_key, inferred_bold = _ocr_style_key(block, page_height, scale=0.82)
-        run = etree.SubElement(
-            paragraph,
-            f"{{{HP}}}run",
-            charPrIDRef=ocr_text_styles[(height_key, centered or inferred_bold)],
-        )
-        text = etree.SubElement(run, f"{{{HP}}}t")
-        text.text = value
+    texts = cast(
+        list[etree._Element],
+        sublist.xpath(".//hp:t", namespaces={"hp": HP}),
+    )
+    for text in texts:
+        text.text = ""
     margin = cast(
         etree._Element,
         rectangle.xpath("./hp:drawText/hp:textMargin", namespaces={"hp": HP})[0],
@@ -756,8 +741,41 @@ def _build_passage_text_box(
     position.set("vertOffset", str(_y_hwp(y0, page_height)))
     comments = rectangle.xpath("./hp:shapeComment", namespaces={"hp": HP})
     if comments:
-        comments[0].text = "OCR 작품/보기 묶음 편집 글상자"
+        comments[0].text = "OCR 작품/보기 테두리"
     return rectangle
+
+
+def _editable_right_boundary(block: Any, page: Any, page_width: int) -> float:
+    style = block.style if isinstance(block.style, dict) else {}
+    column_index = style.get("layout_column")
+    if isinstance(column_index, int) and 0 <= column_index < len(page.columns):
+        column_right = float(page.columns[column_index].bbox.pixel[2])
+        return max(float(block.bbox.pixel[0]) + 2.0, column_right - page_width * 0.012)
+    return page_width * 0.97
+
+
+def _editable_style_key(block: Any, page: Any, page_width: int) -> tuple[int, bool]:
+    height, bold = _ocr_style_key(block, page.height, scale=0.65)
+    x0 = float(block.bbox.pixel[0])
+    available_width = _x_hwp(
+        max(2.0, _editable_right_boundary(block, page, page_width) - x0),
+        page_width,
+    )
+    units = sum(
+        0.35
+        if character.isspace()
+        else 1.0
+        if ord(character) >= 0x2E80
+        else 0.62
+        if character.isalnum()
+        else 0.5
+        for character in str(block.text).strip()
+    )
+    if units:
+        rendered_width_factor = 1.0
+        fit_height = int(available_width * 0.94 / units / rendered_width_factor / 50) * 50
+        height = min(height, max(550, fit_height))
+    return height, bold
 
 
 def _build_table(
@@ -1009,6 +1027,7 @@ def _passage_groups(
         region
         for region in regions
         if region.bbox[2] - region.bbox[0] >= page_width * 0.22
+        and region.bbox[2] - region.bbox[0] <= page_width * 0.52
         and region.bbox[3] - region.bbox[1] >= page_height * 0.045
         and region.bbox[1] >= page_height * 0.09
         and region.bbox[3] <= page_height * 0.95
