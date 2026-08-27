@@ -34,6 +34,7 @@ REGULAR_CHAR_ID = "2"
 EDITABLE_TEXT_CONFIDENCE = 0.75
 READABLE_LEFT_PARA_ID = "21"
 READABLE_CENTER_PARA_ID = "22"
+FLOW_TEXT_HEIGHT = 800
 
 
 @dataclass(frozen=True)
@@ -87,7 +88,7 @@ def render_semantic_hwpx(
     table_template, border_fill = _load_table_parts()
     _install_table_border_fill(header, border_fill)
     _install_semantic_text_styles(header)
-    ocr_text_styles = _install_ocr_text_styles(header, document)
+    ocr_text_styles = _install_ocr_text_styles(header)
     paragraphs = cast(list[etree._Element], section.xpath("./hp:p", namespaces={"hp": HP}))
     background_picture = cast(
         etree._Element,
@@ -186,24 +187,26 @@ def render_semantic_hwpx(
             extracted_pictures += 1
         if clean_page is not None:
             clean_page.close()
-        for block_index, block in enumerate(ir_page.blocks, start=1):
-            if not _eligible_editable_block(
-                block, scaled_images, table_regions, page_height
-            ):
-                continue
-            style_key = _editable_style_key(block, ir_page, ir_page.width)
+        editable_blocks = [
+            block
+            for block in ir_page.blocks
+            if _eligible_editable_block(block, scaled_images, table_regions, page_height)
+        ]
+        for group_index, (bbox, flow_blocks) in enumerate(
+            _column_flow_groups(ir_page, editable_blocks, page_width, page_height), start=1
+        ):
             text_box = _build_text_box(
-                block,
+                flow_blocks,
+                bbox,
                 page_width,
                 page_height,
-                char_style_id=ocr_text_styles[style_key],
-                control_id=1_500_000_000 + page_index * 10_000 + block_index,
+                ocr_text_styles=ocr_text_styles,
+                control_id=1_500_000_000 + page_index * 100 + group_index,
                 z_order=1_000 + editable_text_boxes,
-                right_boundary=_editable_right_boundary(block, ir_page, page_width),
             )
             _append_control(paragraphs[page_index - 1], text_box)
             editable_text_boxes += 1
-            editable_text_characters += len(str(block.text))
+            editable_text_characters += sum(len(str(block.text)) for block in flow_blocks)
 
     members["Contents/section0.xml"] = _xml_bytes(section)
     members["Contents/header.xml"] = _xml_bytes(header)
@@ -321,7 +324,7 @@ def _install_semantic_text_styles(header: etree._Element) -> None:
         align.set("horizontal", alignment)
         for spacing in readable.xpath(".//hh:lineSpacing", namespaces={"hh": HH}):
             spacing.set("type", "PERCENT")
-            spacing.set("value", "150")
+            spacing.set("value", "135")
         para_container.append(readable)
     para_container.set("itemCnt", str(len(para_container)))
     char_container = char_containers[0]
@@ -337,9 +340,7 @@ def _install_semantic_text_styles(header: etree._Element) -> None:
     char_container.set("itemCnt", str(len(char_container)))
 
 
-def _install_ocr_text_styles(
-    header: etree._Element, document: Document
-) -> dict[tuple[int, bool], str]:
+def _install_ocr_text_styles(header: etree._Element) -> dict[tuple[int, bool], str]:
     containers = cast(
         list[etree._Element],
         header.xpath(".//hh:charProperties", namespaces={"hh": HH}),
@@ -353,18 +354,7 @@ def _install_ocr_text_styles(
     )
     if len(sources) != 1:
         raise RuntimeError("regular HWPX character style is missing")
-    heights = {
-        style[0]
-        for page in document.pages
-        for block in page.blocks
-        for style in (
-            _ocr_style_key(block, page.height),
-            _editable_style_key(block, page, page.width),
-            _ocr_style_key(block, page.height, scale=0.82),
-        )
-        if str(block.text).strip()
-    }
-    keys = [(height, bold) for height in sorted(heights) for bold in (False, True)]
+    keys = [(FLOW_TEXT_HEIGHT, bold) for bold in (False, True)]
     result: dict[tuple[int, bool], str] = {}
     next_style_id = max(int(style.get("id", "-1")) for style in container) + 1
     for index, (height, bold) in enumerate(keys):
@@ -383,13 +373,9 @@ def _install_ocr_text_styles(
     return result
 
 
-def _ocr_style_key(block: Any, page_height: float, *, scale: float = 1.0) -> tuple[int, bool]:
-    y0 = float(block.bbox.pixel[1])
-    y1 = float(block.bbox.pixel[3])
-    points = (y1 - y0) / max(1.0, page_height) * 841.89
-    height = int(round(min(16.0, max(6.0, points * scale)) * 2) * 50)
-    bold = str(block.kind) in {"instruction", "question", "title"} or height >= 1_200
-    return height, bold
+def _ocr_style_key(block: Any) -> tuple[int, bool]:
+    kind = getattr(block.kind, "value", str(block.kind))
+    return FLOW_TEXT_HEIGHT, kind in {"instruction", "question", "title"}
 
 
 def _build_editable_backgrounds(
@@ -497,20 +483,18 @@ def _background_color(
 
 
 def _build_text_box(
-    block: Any,
+    blocks: list[Any],
+    bbox: tuple[float, float, float, float],
     page_width: int,
     page_height: int,
     *,
-    char_style_id: str,
+    ocr_text_styles: dict[tuple[int, bool], str],
     control_id: int,
     z_order: int,
-    right_boundary: float | None = None,
 ) -> etree._Element:
-    x0, y0, x1, y1 = (float(value) for value in block.bbox.pixel)
-    padding = max(12.0, (x1 - x0) * 0.08)
-    expanded_x1 = right_boundary if right_boundary is not None else x1 + padding
-    width = _x_hwp(max(2.0, expanded_x1 - x0), page_width)
-    height = _y_hwp(max(2.0, y1 - y0 + 2.0), page_height)
+    x0, y0, x1, y1 = bbox
+    width = _x_hwp(max(2.0, x1 - x0), page_width)
+    height = _y_hwp(max(2.0, y1 - y0), page_height)
     rectangle = etree.Element(f"{{{HP}}}rect")
     for name, value in {
         "id": control_id,
@@ -588,7 +572,7 @@ def _build_text_box(
         id="",
         textDirection="HORIZONTAL",
         lineWrap="BREAK",
-        vertAlign="CENTER",
+        vertAlign="TOP",
         linkListIDRef="0",
         linkListNextIDRef="0",
         textWidth=str(width),
@@ -596,20 +580,15 @@ def _build_text_box(
         hasTextRef="0",
         hasNumRef="0",
     )
-    paragraph = etree.SubElement(
-        sublist,
-        f"{{{HP}}}p",
-        id="0",
-        paraPrIDRef=LEFT_PARA_ID,
-        styleIDRef="0",
-        pageBreak="0",
-        columnBreak="0",
-        merged="0",
+    _write_flow_paragraphs(sublist, blocks, bbox, ocr_text_styles)
+    etree.SubElement(
+        draw_text,
+        f"{{{HP}}}textMargin",
+        left="120",
+        right="120",
+        top="80",
+        bottom="80",
     )
-    run = etree.SubElement(paragraph, f"{{{HP}}}run", charPrIDRef=char_style_id)
-    text = etree.SubElement(run, f"{{{HP}}}t")
-    text.text = str(block.text).strip()
-    etree.SubElement(draw_text, f"{{{HP}}}textMargin", left="0", right="0", top="0", bottom="0")
     etree.SubElement(rectangle, f"{{{HC}}}pt0", x="0", y="0")
     etree.SubElement(rectangle, f"{{{HC}}}pt1", x=str(width), y="0")
     etree.SubElement(rectangle, f"{{{HC}}}pt2", x=str(width), y=str(height))
@@ -640,7 +619,7 @@ def _build_text_box(
     )
     etree.SubElement(rectangle, f"{{{HP}}}outMargin", left="0", right="0", top="0", bottom="0")
     comment = etree.SubElement(rectangle, f"{{{HP}}}shapeComment")
-    comment.text = "OCR 좌표 기반 편집 글상자"
+    comment.text = "OCR 연속 편집 영역"
     return rectangle
 
 
@@ -658,12 +637,12 @@ def _build_passage_outline(
         blocks,
         key=lambda block: (float(block.bbox.pixel[1]), float(block.bbox.pixel[0])),
     )
-    first_style = _ocr_style_key(ordered[0], page_height, scale=0.82)
     rectangle = _build_text_box(
-        ordered[0],
+        [ordered[0]],
+        tuple(float(value) for value in ordered[0].bbox.pixel),
         page_width,
         page_height,
-        char_style_id=ocr_text_styles[first_style],
+        ocr_text_styles=ocr_text_styles,
         control_id=control_id,
         z_order=z_order,
     )
@@ -745,37 +724,182 @@ def _build_passage_outline(
     return rectangle
 
 
-def _editable_right_boundary(block: Any, page: Any, page_width: int) -> float:
-    style = block.style if isinstance(block.style, dict) else {}
-    column_index = style.get("layout_column")
-    if isinstance(column_index, int) and 0 <= column_index < len(page.columns):
-        column_right = float(page.columns[column_index].bbox.pixel[2])
-        return max(float(block.bbox.pixel[0]) + 2.0, column_right - page_width * 0.012)
-    return page_width * 0.97
+def _column_flow_groups(
+    page: Any,
+    blocks: list[Any],
+    page_width: int,
+    page_height: int,
+) -> list[tuple[tuple[float, float, float, float], list[Any]]]:
+    if not blocks:
+        return []
+    columns = sorted(page.columns, key=lambda column: int(column.index))
+    assigned: set[str] = set()
+    groups: list[tuple[tuple[float, float, float, float], list[Any]]] = []
+    body_bottom = page_height * 0.92
+    for column in columns:
+        cx0, _cy0, cx1, _cy1 = (float(value) for value in column.bbox.pixel)
+        selected = []
+        for block in blocks:
+            bx0, by0, bx1, _by1 = (float(value) for value in block.bbox.pixel)
+            style = block.style if isinstance(block.style, dict) else {}
+            in_column = style.get("layout_column") == int(column.index)
+            if len(columns) == 1:
+                in_column = by0 < body_bottom
+            elif style.get("layout_column") is None:
+                in_column = cx0 <= bx0 and bx1 <= cx1 and by0 < body_bottom
+            if in_column:
+                selected.append(block)
+        if not selected:
+            continue
+        assigned.update(str(block.id) for block in selected)
+        left = max(cx0 + page_width * 0.012, min(float(block.bbox.pixel[0]) for block in selected))
+        right = min(
+            cx1 - page_width * 0.012,
+            max(
+                max(float(block.bbox.pixel[2]) for block in selected),
+                cx1 - page_width * 0.03,
+            ),
+        )
+        top = min(float(block.bbox.pixel[1]) for block in selected)
+        bottom = max(
+            max(float(block.bbox.pixel[3]) for block in selected) + page_height * 0.01,
+            page_height * 0.925,
+        )
+        groups.append(((left, top, right, min(page_height * 0.95, bottom)), selected))
+
+    for block in blocks:
+        if str(block.id) in assigned:
+            continue
+        x0, y0, x1, y1 = (float(value) for value in block.bbox.pixel)
+        groups.append(
+            (
+                (
+                    max(0.0, x0 - 4.0),
+                    max(0.0, y0 - 2.0),
+                    min(float(page_width), x1 + 8.0),
+                    min(float(page_height), y1 + 4.0),
+                ),
+                [block],
+            )
+        )
+    return groups
 
 
-def _editable_style_key(block: Any, page: Any, page_width: int) -> tuple[int, bool]:
-    height, bold = _ocr_style_key(block, page.height, scale=0.65)
-    x0 = float(block.bbox.pixel[0])
-    available_width = _x_hwp(
-        max(2.0, _editable_right_boundary(block, page, page_width) - x0),
-        page_width,
+def _write_flow_paragraphs(
+    sublist: etree._Element,
+    blocks: list[Any],
+    bbox: tuple[float, float, float, float],
+    ocr_text_styles: dict[tuple[int, bool], str],
+) -> None:
+    def append_paragraph(text_value: str, *, bold: bool, centered: bool) -> None:
+        paragraph = etree.SubElement(
+            sublist,
+            f"{{{HP}}}p",
+            id="0",
+            paraPrIDRef=READABLE_CENTER_PARA_ID if centered else READABLE_LEFT_PARA_ID,
+            styleIDRef="0",
+            pageBreak="0",
+            columnBreak="0",
+            merged="0",
+        )
+        run = etree.SubElement(
+            paragraph,
+            f"{{{HP}}}run",
+            charPrIDRef=ocr_text_styles[(FLOW_TEXT_HEIGHT, bold)],
+        )
+        text = etree.SubElement(run, f"{{{HP}}}t")
+        text.text = text_value
+        if text_value == " ":
+            text.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+
+    for text, bold, centered, blank_lines in _flow_paragraphs(blocks, bbox):
+        for _ in range(blank_lines):
+            append_paragraph(" ", bold=False, centered=False)
+        append_paragraph(text, bold=bold, centered=centered)
+
+
+def _flow_paragraphs(
+    blocks: list[Any], bbox: tuple[float, float, float, float]
+) -> list[tuple[str, bool, bool, int]]:
+    ordered = sorted(
+        blocks,
+        key=lambda block: (
+            float(block.bbox.pixel[1]),
+            float(block.bbox.pixel[0]),
+            int(block.reading_order),
+        ),
     )
-    units = sum(
-        0.35
-        if character.isspace()
-        else 1.0
-        if ord(character) >= 0x2E80
-        else 0.62
-        if character.isalnum()
-        else 0.5
-        for character in str(block.text).strip()
-    )
-    if units:
-        rendered_width_factor = 1.0
-        fit_height = int(available_width * 0.94 / units / rendered_width_factor / 50) * 50
-        height = min(height, max(550, fit_height))
-    return height, bold
+    heights = [
+        max(1.0, float(block.bbox.pixel[3]) - float(block.bbox.pixel[1])) for block in ordered
+    ]
+    typical_height = float(np.median(heights)) if heights else 24.0
+    result: list[dict[str, Any]] = []
+    box_center = (bbox[0] + bbox[2]) / 2
+    box_width = max(1.0, bbox[2] - bbox[0])
+    for block in ordered:
+        text = str(block.text).strip()
+        x0, y0, x1, y1 = (float(value) for value in block.bbox.pixel)
+        center = (y0 + y1) / 2
+        bold = _ocr_style_key(block)[1]
+        same_row = bool(result) and abs(center - float(result[-1]["last_center"])) <= typical_height * 0.45
+        gap = float("inf") if not result else y0 - float(result[-1]["y1"])
+        starts_paragraph = re.match(
+            r"^(?:\d{1,3}[.)]\s|[①-⑳㉠-㉻○●•]|\([가-힣A-Za-z0-9]+\)|\[[^]]+\]|-?\s*<[^>]{1,16}>)",
+            text,
+        )
+        new_paragraph = (
+            not result
+            or not same_row
+            and (
+                gap > typical_height * 0.55
+                or starts_paragraph is not None
+                or bold != bool(result[-1]["bold"])
+            )
+        )
+        if not new_paragraph:
+            if same_row:
+                horizontal_gap = max(0.0, x0 - float(result[-1]["last_x1"]))
+                separator = " " * max(
+                    1, min(5, round(horizontal_gap / max(1.0, typical_height)))
+                )
+            else:
+                separator = " "
+                result[-1]["centered"] = False
+            result[-1]["text"] = f"{result[-1]['text']}{separator}{text}"
+            result[-1]["x0"] = min(float(result[-1]["x0"]), x0)
+            result[-1]["x1"] = max(float(result[-1]["x1"]), x1)
+            result[-1]["y1"] = max(float(result[-1]["y1"]), y1)
+            result[-1]["last_center"] = center
+            result[-1]["last_x1"] = x1
+            continue
+        blank_lines = 0
+        if result:
+            source_gap = max(0.0, y0 - float(result[-1]["y1"]))
+            blank_lines = min(20, max(0, round(source_gap / (typical_height * 1.15)) - 1))
+        row_center = (x0 + x1) / 2
+        centered = (
+            re.fullmatch(r"-?\s*<[^>]{1,16}>\s*-?", text) is not None
+            or (
+                x1 - x0 < box_width * 0.72 and abs(row_center - box_center) < box_width * 0.08
+            )
+        )
+        result.append(
+            {
+                "text": text,
+                "bold": bold,
+                "centered": centered,
+                "blank_lines": blank_lines,
+                "x0": x0,
+                "x1": x1,
+                "y1": y1,
+                "last_center": center,
+                "last_x1": x1,
+            }
+        )
+    return [
+        (str(item["text"]), bool(item["bold"]), bool(item["centered"]), int(item["blank_lines"]))
+        for item in result
+    ]
 
 
 def _build_table(
@@ -945,7 +1069,7 @@ def _write_cell_paragraphs(
         if block is None:
             run.set("charPrIDRef", BOLD_CHAR_ID if bold else REGULAR_CHAR_ID)
         else:
-            height, inferred_bold = _ocr_style_key(block, page_height)
+            height, inferred_bold = _ocr_style_key(block)
             run.set("charPrIDRef", ocr_text_styles[(height, bold or inferred_bold)])
         if block is not None:
             text = etree.SubElement(run, f"{{{HP}}}t")

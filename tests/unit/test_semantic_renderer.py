@@ -99,7 +99,7 @@ def test_editable_renderer_keeps_pages_without_source_backgrounds(tmp_path: Path
 
     assert stats.pages == 2
     assert stats.background_pictures == 0
-    assert stats.editable_text_boxes > 0
+    assert stats.editable_text_boxes == 2
     assert validate_hwpx(output).valid
     with zipfile.ZipFile(output) as archive:
         section = etree.fromstring(archive.read("Contents/section0.xml"))
@@ -108,9 +108,19 @@ def test_editable_renderer_keeps_pages_without_source_backgrounds(tmp_path: Path
         assert not section.xpath("//*[local-name()='pic']")
         assert "BinData/image1.jpg" not in archive.namelist()
         assert "BinData/image2.jpg" not in archive.namelist()
+        flow_boxes = section.xpath(
+            "//*[local-name()='rect'][./*[local-name()='lineShape'][@style='NONE']]"
+        )
+        assert len(flow_boxes) == 2
+        body_boxes = [
+            box
+            for box in flow_boxes
+            if len(box.xpath(".//*[local-name()='t'][normalize-space()]")) >= 3
+        ]
+        assert len(body_boxes) == 2
 
 
-def test_editable_renderer_keeps_passage_lines_at_source_positions_inside_outline(
+def test_editable_renderer_groups_passage_lines_in_one_continuous_edit_area(
     tmp_path: Path,
 ) -> None:
     image_path = tmp_path / "page-1.png"
@@ -169,12 +179,17 @@ def test_editable_renderer_keeps_passage_lines_at_source_positions_inside_outlin
         paragraphs = boxed[0].xpath(".//*[local-name()='subList']/*[local-name()='p']")
         assert len(paragraphs) == 1
         assert not boxed[0].xpath(".//*[local-name()='t']/text()")
-        positioned_text = section.xpath(
+        flow_boxes = section.xpath(
             "//*[local-name()='rect'][./*[local-name()='lineShape'][@style='NONE']]"
-            "//*[local-name()='t']/text()"
         )
-        assert "<보기>" in positioned_text
-        assert "작품의 첫 번째 본문 줄" in positioned_text
+        passage_flow = [
+            box
+            for box in flow_boxes
+            if "<보기>" in box.xpath("string(.//*[local-name()='subList'])")
+        ]
+        assert len(passage_flow) == 1
+        flow_text = passage_flow[0].xpath("string(.//*[local-name()='subList'])")
+        assert "작품의 첫 번째 본문 줄" in flow_text
         wraps = section.xpath(
             "//*[local-name()='rect']/*[local-name()='drawText']/*[local-name()='subList']"
         )
@@ -186,6 +201,10 @@ def test_editable_renderer_keeps_passage_lines_at_source_positions_inside_outlin
             )
         ]
         assert style_ids == list(range(len(style_ids)))
+        ocr_styles = header.xpath(
+            "//*[local-name()='charProperties']/*[local-name()='charPr'][@height='800']"
+        )
+        assert len(ocr_styles) == 2
 
 
 def test_editable_renderer_rejects_cross_column_passage_outline(tmp_path: Path) -> None:
