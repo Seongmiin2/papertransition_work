@@ -1,0 +1,25 @@
+date,component,model_config_id,dataset_split,metric_name,metric_value,notes,source_report
+2026-08-25,anomaly,page-anomaly-v1,train,pages,173,"rank32/thumb32 production model, sweep in OPTIMIZATION_REPORT_2026-08-25.md",models\page-anomaly-v1\anomaly_report.json
+2026-08-25,anomaly,page-anomaly-v1,train,flagged,0,"rank32/thumb32 production model, sweep in OPTIMIZATION_REPORT_2026-08-25.md",models\page-anomaly-v1\anomaly_report.json
+2026-08-25,anomaly,page-anomaly-v1,train,mean_mse,0.00032094,"rank32/thumb32 production model, sweep in OPTIMIZATION_REPORT_2026-08-25.md",models\page-anomaly-v1\anomaly_report.json
+2026-08-25,anomaly,page-anomaly-v1,validation,pages,39,"rank32/thumb32 production model, sweep in OPTIMIZATION_REPORT_2026-08-25.md",models\page-anomaly-v1\anomaly_report.json
+2026-08-25,anomaly,page-anomaly-v1,validation,flagged,2,"rank32/thumb32 production model, sweep in OPTIMIZATION_REPORT_2026-08-25.md",models\page-anomaly-v1\anomaly_report.json
+2026-08-25,anomaly,page-anomaly-v1,validation,mean_mse,0.0004754,"rank32/thumb32 production model, sweep in OPTIMIZATION_REPORT_2026-08-25.md",models\page-anomaly-v1\anomaly_report.json
+2026-08-25,anomaly,page-anomaly-v1,test,pages,54,"rank32/thumb32 production model, sweep in OPTIMIZATION_REPORT_2026-08-25.md",models\page-anomaly-v1\anomaly_report.json
+2026-08-25,anomaly,page-anomaly-v1,test,flagged,20,"rank32/thumb32 production model, sweep in OPTIMIZATION_REPORT_2026-08-25.md",models\page-anomaly-v1\anomaly_report.json
+2026-08-25,anomaly,page-anomaly-v1,test,mean_mse,0.00095397,"rank32/thumb32 production model, sweep in OPTIMIZATION_REPORT_2026-08-25.md",models\page-anomaly-v1\anomaly_report.json
+2026-08-26,ocr,pp-ocrv5-mobile-rec-pretrained,validation,line_exact_match_rate,0.8409,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-pretrained,validation,line_normalized_edit_similarity,0.9726,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-pretrained,validation,lines_per_second,151.6,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r1,validation,line_exact_match_rate,0.9589,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r1,validation,line_normalized_edit_similarity,0.9854,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r1,validation,lines_per_second,157.4,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r1,test,line_exact_match_rate,0.9644,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r1,test,line_normalized_edit_similarity,0.9887,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r1,test,lines_per_second,154.5,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r2,validation,line_exact_match_rate,0.9443,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r2,validation,line_normalized_edit_similarity,0.9817,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r2,validation,lines_per_second,154.1,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r2,test,line_exact_match_rate,0.9557,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r2,test,line_normalized_edit_similarity,0.9815,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
+2026-08-26,ocr,pp-ocrv5-mobile-rec-ft-r2,test,lines_per_second,155.0,"line-level recognizer benchmark, MODEL_RESEARCH_2026-08-26.md results table",MODEL_RESEARCH_2026-08-26.md
