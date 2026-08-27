@@ -3,9 +3,9 @@
   "pairs": [
     {
       "id": "hongcheon-middle2-2025-final",
-      "source_pdf": "홍천중2.pdf",
-      "transcript_pdf": "files (1)/홍천중학교_2학년_1학기_2차지필평가_국어_텍스트PDF.pdf",
-      "editable_target": "files (1)/홍천중학교_2학년_1학기_2차지필평가_국어_한글파일.docx",
+      "source_pdf": "ai/datasets/source/references/홍천중2.pdf",
+      "transcript_pdf": "ai/datasets/source/references/홍천중학교_2학년_1학기_2차지필평가_국어_텍스트PDF.pdf",
+      "editable_target": "ai/datasets/source/references/홍천중학교_2학년_1학기_2차지필평가_국어_한글파일.docx",
       "editable_pages_observed": 11,
       "split": "test",
       "visually_verified": true,

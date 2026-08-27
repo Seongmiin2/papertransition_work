@@ -10,19 +10,12 @@ __pycache__/
 .ruff_cache/
 .env
 output/
-models/*
-!models/korean-exam-ppocrv5/
-models/korean-exam-ppocrv5/*
-!models/korean-exam-ppocrv5/inference.json
-!models/korean-exam-ppocrv5/inference.pdiparams
-!models/korean-exam-ppocrv5/inference.yml
-!models/korean-exam-ppocrv5-v3-candidate/
-models/korean-exam-ppocrv5-v3-candidate/*
-!models/korean-exam-ppocrv5-v3-candidate/inference.json
-!models/korean-exam-ppocrv5-v3-candidate/inference.pdiparams
-!models/korean-exam-ppocrv5-v3-candidate/inference.yml
-files (1)/
-reports/reference_pages/
+/ai/datasets/source/*
+!/ai/datasets/source/README.md
+/ai/modeling/pretrained/
+/ai/results/reference_pages/
+/ai/production/deployed/page-anomaly-v1/anomaly_report.json
+/ai/production/deployed/page-anomaly-v1/page_scores.jsonl
 *.pdf
 document_ir.json
 review.json
@@ -36,5 +29,3 @@ github_publish/
 *.lnk
 /output.hwpx
 /.claude/
-/고1-2/
-/고2/

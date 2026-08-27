@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "model_id": "page-anomaly-v1",
+  "status": "deployed",
+  "model": "linear_page_autoencoder_pca",
+  "purpose": "quality routing only; never used to invent OCR or document content",
+  "training": {
+    "thumbnail_size": 32,
+    "requested_rank": 32,
+    "effective_rank": 32,
+    "threshold": 0.0008169473148882389,
+    "threshold_policy": "max(train_p99_5, validation_p99_5); test is held out"
+  },
+  "metrics": {
+    "train_pages": 173,
+    "train_flagged": 0,
+    "validation_pages": 39,
+    "validation_flagged": 2,
+    "test_pages": 54,
+    "test_flagged": 20
+  },
+  "artifact": {
+    "local_directory": "ai/production/deployed/page-anomaly-v1",
+    "weights": "page_anomaly_linear_autoencoder.npz",
+    "sha256": "1f62a89f78d87d8b843cab8ccc3555b05b56ebb56a7210af492fac06749ac850"
+  }
+}

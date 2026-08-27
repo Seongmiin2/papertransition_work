@@ -31,7 +31,7 @@ PaddleOCR-VL 계열은 속도 목표를 책임지는 기본 인식기가 아니�
 
 ## 데이터셋
 
-scripts/build_hwp_line_dataset.py가 한컴으로 HWP를 PDF 렌더링한 뒤, PDF 내부의 실제 글자 좌표로
+ai/datasets/build_hwp_line_dataset.py가 한컴으로 HWP를 PDF 렌더링한 뒤, PDF 내부의 실제 글자 좌표로
 행 이미지를 잘라 정답 글자열과 묶는다. OCR 예측값을 정답으로 재사용하지 않는다.
 
 | 분할 | 문서 | 행 |
@@ -68,9 +68,9 @@ scripts/build_hwp_line_dataset.py가 한컴으로 HWP를 PDF 렌더링한 뒤, P
 
 실행 명령:
 
-    python scripts\build_hwp_line_dataset.py --input "고1-2" --input "고2" --output output\hwp-ocr-training-v2
+    python ai\datasets\build_hwp_line_dataset.py --input "ai\datasets\source\고1-2" --input "ai\datasets\source\고2" --output output\hwp-ocr-training-v2
 
-    python scripts\train_korean_ocr.py --paddleocr-repo output\vendor\PaddleOCR --dataset output\hwp-ocr-training-v2 --output output\trained-korean-ocr-hwp-v2-lr2e5 --pretrained output\trained-korean-ocr-hwp-lr1e4\best_accuracy.pdparams --epochs 6 --batch-size 32 --workers 2 --learning-rate 0.00002 --warmup-epochs 1 --eval-every 250
+    python ai\modeling\train_korean_ocr.py --paddleocr-repo output\vendor\PaddleOCR --dataset output\hwp-ocr-training-v2 --output output\trained-korean-ocr-hwp-v2-lr2e5 --pretrained output\trained-korean-ocr-hwp-lr1e4\best_accuracy.pdparams --epochs 6 --batch-size 32 --workers 2 --learning-rate 0.00002 --warmup-epochs 1 --eval-every 250
 
 ## 결과
 
@@ -87,7 +87,7 @@ scripts/build_hwp_line_dataset.py가 한컴으로 HWP를 PDF 렌더링한 뒤, P
 
 최종 추론 모델:
 
-- 앱 경로: models/korean-exam-ppocrv5
+- 앱 경로: ai/production/deployed/korean-exam-ppocrv5
 - 학습 checkpoint: output/trained-korean-ocr-hwp-v2-lr2e5/best_accuracy
 - 추론 가중치 SHA-256:
   BDCC257F9B9A1D4CAF1F1AC6791E5B3AB981C990BF61177344FD2ED6E4FE716D
@@ -107,7 +107,7 @@ editable renderer로 끝까지 처리했다.
 
 실행 명령:
 
-    python -m scan2hwpx convert "samples\(천재박)홍천중3_1학기 기말고사(1).pdf" --output "output\model-inference-v2\홍천중3-trained-v2-editable.hwpx" --mode fast --dpi 120 --device gpu:0 --renderer editable --recognition-model-dir "models\korean-exam-ppocrv5"
+    python -m scan2hwpx convert "samples\(천재박)홍천중3_1학기 기말고사(1).pdf" --output "output\model-inference-v2\홍천중3-trained-v2-editable.hwpx" --mode fast --dpi 120 --device gpu:0 --renderer editable --recognition-model-dir "ai\production\deployed\korean-exam-ppocrv5"
 
 ## 10개/1분 목표의 현재 상태
 

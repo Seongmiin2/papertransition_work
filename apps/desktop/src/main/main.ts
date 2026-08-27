@@ -170,8 +170,9 @@ async function processQueue(): Promise<void> {
     job = publish(database.transition(id, "PREPROCESSING", { progress: 0.08 }));
     job = publish(database.transition(id, "OCR", { progress: 0.1 }));
     const projectRoot = app.getAppPath();
-    const pageAnomalyModel = join(projectRoot, "models", "page-anomaly-v1", "page_anomaly_linear_autoencoder.npz");
-    const recognitionModel = join(projectRoot, "models", "korean-exam-ppocrv5");
+    const deployedModels = join(projectRoot, "ai", "production", "deployed");
+    const pageAnomalyModel = join(deployedModels, "page-anomaly-v1", "page_anomaly_linear_autoencoder.npz");
+    const recognitionModel = join(deployedModels, "korean-exam-ppocrv5");
     const child = ensureWorker();
     activeJobId = id;
     workerStderr = "";

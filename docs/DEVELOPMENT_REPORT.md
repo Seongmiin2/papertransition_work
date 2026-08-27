@@ -322,3 +322,17 @@ COCO 형식 `annotations/instances_seed.json`, 상세 JSON, 페이지별 overlay
 | 4 | 불필요한 코드/파일 정리 | 1차 완료, 재확인 필요 항목 있음 | Hancom 미사용 함수·Tkinter 프로토타입 삭제 완료. `vision/formulas.py`의 미사용 pluggable 추상화, `ir/models.py`의 `Asset`/`ReprocessRecord`는 재확인 완료, 삭제 대기 |
 
 이번 로드맵에서 `output/`, `models/`, `고1-2/`, `고2/`, `data/`(내용)는 다른 세션이 실시간으로 쓰고 있는 학습 산출물/원본 데이터이므로 물리적으로 옮기거나 이름을 바꾸지 않는다. 1·2·4번(코드 변경)은 `src/scan2hwpx/hwpx/semantic.py` 등 최근 활발히 수정되는 파일과 인접해 있어, 해당 파일들의 수정이 잠잠해진 뒤 순서대로 진행한다.
+
+## 13. 2026-08-27 AI 수명주기 구조 개편
+
+학습 종료 후 위 12절의 동시 작업 제약이 해소되어, AI 자산을 실제로 다음 네 단계로 재구성했다.
+
+- `ai/datasets/`: 로컬 원본, 데이터 품질 설정, 데이터셋 생성기
+- `ai/modeling/`: 학습 설정·코드, 실험별 재현 메타데이터
+- `ai/results/`: 누적 성과 CSV, 성장표, 과거 보고서
+- `ai/production/`: 앱 배포 모델과 평가 후보
+
+`output/`의 약 10GB 생성물은 과거 실험의 절대경로와 재현성을 보존하기 위해 이동하지 않았다. 원본 HWP/PDF/DOCX와 pretrained 가중치는 새 단계 아래로 옮겼지만 계속 Git에서 제외한다.
+
+오늘 완료한 OCR v3 실험은 6 epoch 학습과 inference export까지 성공했으나, 동일한 2,921행 test에서 v2보다 완전일치가 한 줄 적고 편집 유사도도 낮아 배포하지 않았다. v2는 `ai/production/deployed/`에 유지하고 v3는 `ai/production/candidates/`에 보존했다. 비교 지표와 판정은 `ai/results/performance_log.csv` 및 `ai/modeling/experiments/`에서 추적한다.
+데스크톱 앱의 모델 로딩 경로도 새 production 위치로 바꾸고, 작고 필수적인 page-anomaly 가중치를 저장소에 포함해 새 clone에서 동일한 품질 라우팅 구성이 재현되도록 했다.

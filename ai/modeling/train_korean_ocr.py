@@ -22,10 +22,10 @@ def main() -> int:
     parser.add_argument(
         "--pretrained",
         type=Path,
-        default=Path("models/korean_PP-OCRv5_mobile_rec_pretrained.pdparams"),
+        default=Path("ai/modeling/pretrained/korean_PP-OCRv5_mobile_rec_pretrained.pdparams"),
     )
     parser.add_argument(
-        "--config", type=Path, default=Path("training/paddleocr/korean_exam_mobile_rec.yml")
+        "--config", type=Path, default=Path("ai/modeling/configs/korean_exam_mobile_rec.yml")
     )
     parser.add_argument("--train-label", type=Path)
     parser.add_argument("--validation-label", type=Path)
@@ -43,7 +43,7 @@ def main() -> int:
     parser.add_argument("--no-export", action="store_true")
     args = parser.parse_args()
 
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     paddle_repo = args.paddleocr_repo.resolve()
     dataset = (project_root / args.dataset).resolve()
     output = (project_root / args.output).resolve()

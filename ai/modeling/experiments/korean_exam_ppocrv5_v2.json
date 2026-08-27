@@ -1,10 +1,11 @@
 {
   "schema_version": "1.0",
   "model_id": "korean-exam-ppocrv5-20260826-v2",
+  "status": "deployed",
   "base_model": "korean_PP-OCRv5_mobile_rec",
   "paddleocr_commit": "2661c7c0ef5c613e8f93c6e93b2e052399f0f854",
   "dataset": {
-    "builder": "scripts/build_hwp_line_dataset.py",
+    "builder": "ai/datasets/build_hwp_line_dataset.py",
     "split_seed": 20260826,
     "train_documents": 33,
     "validation_documents": 4,
@@ -27,7 +28,7 @@
     "test_normalized_edit_distance": 0.9815295938
   },
   "artifact": {
-    "local_directory": "models/korean-exam-ppocrv5",
+    "local_directory": "ai/production/deployed/korean-exam-ppocrv5",
     "weights": "inference.pdiparams",
     "sha256": "bdcc257f9b9a1d4caf1f1ac6791e5b3ab981c990bf61177344fd2ed6e4fe716d"
   }

@@ -1,13 +1,13 @@
-"""Flatten one existing benchmark JSON report into reports/performance_log.csv.
+"""Flatten one existing benchmark JSON report into ai/results/performance_log.csv.
 
 Reuses the report shapes already produced by `ocr-benchmark`, `formula-benchmark`,
 `train-page-anomaly`, and `batch-convert` (see src/scan2hwpx/training/ocr_benchmark.py,
-src/scan2hwpx/vision/benchmark.py, models/*/anomaly_report.json, src/scan2hwpx/batch.py).
+src/scan2hwpx/vision/benchmark.py, and src/scan2hwpx/batch.py).
 Does not invent a new report format; only appends flattened rows to a CSV so results
 over time are visible in one place (openable directly in Excel).
 
 Usage:
-    python scripts/log_benchmark_metrics.py --report path/to/ocr_benchmark.json \
+    python ai/results/record_metrics.py --report path/to/ocr_benchmark.json \
         --component ocr --model-config-id korean-exam-ppocrv5-v2 [--notes "..."]
 """
 
@@ -207,7 +207,7 @@ def main() -> None:
     parser.add_argument(
         "--csv",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "reports" / "performance_log.csv",
+        default=Path(__file__).resolve().with_name("performance_log.csv"),
     )
     args = parser.parse_args()
 

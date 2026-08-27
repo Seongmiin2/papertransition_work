@@ -1,5 +1,7 @@
 # 코드 효율화·모델 최적화·데이터 정리 보고서 (2026-08-25)
 
+> 이 문서는 당시 경로를 보존한 이력이다. 현재 경로는 `ai/datasets`, `ai/modeling`, `ai/results`, `ai/production`으로 재구성되었으며 실행 명령은 각 폴더의 README를 따른다.
+
 ## 결론
 
 4개 영역(파이썬 변환 파이프라인 런타임, Electron/TS 프론트엔드, OCR 재학습 하이퍼파라미터, 이상탐지 PCA 모델)을 점검했다. 실제로 코드를 고치고 회귀 테스트(pytest 50개, ruff, mypy strict, npm build/test)로 검증한 항목과, 위험도·검증 가능성 문제로 설정 변경 또는 권장 사항으로만 남긴 항목을 분리했다. 새로 발견된 미정리 데이터(P고2 21개교, 시험지 1건)는 기존 `prepare-training-corpus` 파이프라인으로 정리했고, 그 과정에서 `configs/training_pairs.json`이 가리키는 gold 원본(`홍천중2.pdf`)이 현재 저장소에 없어 corpus 생성이 막혀 있었다는 사실도 함께 확인했다.

@@ -44,8 +44,9 @@ def main() -> int:
     if args.max_text_length < 2:
         parser.error("--max-text-length must be at least 2")
 
-    project_root = Path(__file__).resolve().parents[1]
-    input_dirs = [(project_root / path).resolve() for path in (args.inputs or [Path("고2")])]
+    project_root = Path(__file__).resolve().parents[2]
+    default_inputs = [Path("ai/datasets/source/고2")]
+    input_dirs = [(project_root / path).resolve() for path in (args.inputs or default_inputs)]
     output_dir = (project_root / args.output).resolve()
     model_dir = args.base_model.expanduser().resolve()
     hwp_paths = sorted(
