@@ -16,6 +16,11 @@ models/korean-exam-ppocrv5/*
 !models/korean-exam-ppocrv5/inference.json
 !models/korean-exam-ppocrv5/inference.pdiparams
 !models/korean-exam-ppocrv5/inference.yml
+!models/korean-exam-ppocrv5-v3-candidate/
+models/korean-exam-ppocrv5-v3-candidate/*
+!models/korean-exam-ppocrv5-v3-candidate/inference.json
+!models/korean-exam-ppocrv5-v3-candidate/inference.pdiparams
+!models/korean-exam-ppocrv5-v3-candidate/inference.yml
 files (1)/
 reports/reference_pages/
 *.pdf

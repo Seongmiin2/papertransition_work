@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "model_id": "korean-exam-ppocrv5-20260827-v3-candidate",
+  "status": "candidate_rejected_for_deployment",
+  "base_model": "korean_PP-OCRv5_mobile_rec",
+  "paddleocr_commit": "2661c7c0ef5c613e8f93c6e93b2e052399f0f854",
+  "dataset": {
+    "builder": "scripts/build_hwp_line_dataset.py",
+    "split_seed": 20260826,
+    "train_documents": 33,
+    "validation_documents": 4,
+    "test_documents": 4,
+    "train_lines": 30309,
+    "validation_lines": 3392,
+    "test_lines": 2921
+  },
+  "training": {
+    "continued_from": "korean-exam-ppocrv5-20260826-v2",
+    "epochs": 6,
+    "batch_size": 32,
+    "learning_rate": 0.00001,
+    "warmup_epochs": 1,
+    "evaluation_interval_steps": 1626
+  },
+  "metrics": {
+    "validation_exact_accuracy": 0.9443452353,
+    "validation_normalized_edit_distance": 0.9818973411,
+    "test_exact_accuracy": 0.9553571396,
+    "test_normalized_edit_distance": 0.9810519064
+  },
+  "deployed_baseline": {
+    "model_id": "korean-exam-ppocrv5-20260826-v2",
+    "test_exact_accuracy": 0.9557005462,
+    "test_normalized_edit_distance": 0.9815295938
+  },
+  "decision": "Kept as a reproducible candidate because both held-out test metrics were below v2.",
+  "artifact": {
+    "local_directory": "models/korean-exam-ppocrv5-v3-candidate",
+    "weights": "inference.pdiparams",
+    "sha256": "b68e6eeb3ebaa557b88d2bc72b79d0362074b5242dbd2b497c13d41d5a383001"
+  }
+}
