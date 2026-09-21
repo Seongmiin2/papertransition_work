@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "experiment_id": "model-a-line-risk-rank-fusion-20260909",
+  "status": "exploratory_non_promotable",
+  "purpose": "Test whether a confidence-anchored residual score is worth evaluating on a new independent document split.",
+  "inputs": {
+    "learned_weights_sha256": "5211f8e5ecd26a4352926a96721e96d7d0cad316ba7c839037dd1e3c4a7ba7db",
+    "derived_dataset_sha256": "eb185eb9679061976c7fb0ec7c747e2690f50f8e324a1745f669c93a4281b832",
+    "split": "source-test-used-as-risk-validation",
+    "samples": 2101,
+    "errors": 193
+  },
+  "method": {
+    "score": "0.16 * percentile_rank(learned_score) + 0.84 * percentile_rank(1 - ocr_confidence)",
+    "alpha_grid": {
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "step": 0.01
+    },
+    "selection_objective": "maximum_precision_subject_to_error_recall_at_least_0.98"
+  },
+  "validation_metrics": {
+    "precision": 0.1424287856071964,
+    "recall": 0.9844559585492227,
+    "f1": 0.24885396201702684,
+    "average_precision": 0.3220540907973592,
+    "roc_auc": 0.8214675595529052
+  },
+  "confidence_only_baseline": {
+    "precision": 0.13484740951029098,
+    "recall": 0.9844559585492227,
+    "f1": 0.23720349563046192,
+    "average_precision": 0.25996910797095923,
+    "roc_auc": 0.7882490957082804
+  },
+  "test_evaluation_performed": false,
+  "decision": "Do not deploy. The blend weight was selected on the only risk-validation split. Carry this forward only as a preregistered residual-head hypothesis for a new independent split.",
+  "required_next_evidence": [
+    "new_document_lineage_disjoint_from_upstream_ocr_training_and_this_validation",
+    "training_rights_manifest",
+    "source_document_sha256_on_every_derived_record",
+    "fixed_alpha_0.16_evaluation_without_retuning"
+  ]
+}

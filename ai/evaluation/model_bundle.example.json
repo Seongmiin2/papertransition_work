@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "bundle_id": "exam2hwpx-example-candidate-v1",
+  "status": "candidate",
+  "created_at": "2026-09-09T00:00:00+09:00",
+  "model_a": {
+    "status": "placeholder",
+    "model_id": "document-understanding-model-a",
+    "revision": "not-trained",
+    "artifact_ref": null,
+    "artifact_sha256": null
+  },
+  "model_b": {
+    "status": "placeholder",
+    "model_id": "document-author-model-b",
+    "revision": "not-trained",
+    "artifact_ref": null,
+    "artifact_sha256": null
+  },
+  "dataset_manifest_ref": "repo://ai/datasets/configs/golden-manifest-v1.json",
+  "dataset_manifest_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "release_gate_set_id": "initial_v1",
+  "capability_profile_ref": "repo://ai/knowledge/hancom/capability_profile.json",
+  "capability_profile_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "hancom_knowledge_manifest_ref": "repo://ai/knowledge/hancom/sources.json",
+  "hancom_knowledge_manifest_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+  "hancom_knowledge_corpus_ref": "artifact://knowledge/hancom/chunks-v1.jsonl",
+  "hancom_knowledge_corpus_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "compiler_version": "scan2hwpx-0.0.1",
+  "compiler_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "prompt_version": "document-author-v1",
+  "contract_versions": {
+    "evidence_ir": "evidence-ir/1.0",
+    "content_ir": "content-ir/1.0",
+    "hwp_document_plan": "hwp-document-plan/1.0",
+    "quality_report": "quality-report/1.0"
+  }
+}

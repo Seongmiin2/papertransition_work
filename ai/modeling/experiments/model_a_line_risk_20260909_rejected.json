@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "model_id": "model-a-line-risk-cnn-eb185eb96790-seed-20260909",
+  "component": "model_a_line_error_review_router",
+  "status": "candidate_rejected_for_routing",
+  "dataset": {
+    "derived_dataset_sha256": "eb185eb9679061976c7fb0ec7c747e2690f50f8e324a1745f669c93a4281b832",
+    "report_sha256": "5324e69b6580e1dbf0bf27bca2e573285e81d0b5f95110db3205ce7bed4b1f44",
+    "risk_train_source_split": "validation",
+    "risk_validation_source_split": "test",
+    "declared_upstream_ocr_training_split": "train",
+    "risk_train_lines": 2584,
+    "risk_train_errors": 292,
+    "risk_validation_lines": 2101,
+    "risk_validation_errors": 193,
+    "cross_split_image_sha256_count": 0,
+    "cross_split_observed_target_pair_count": 0
+  },
+  "training": {
+    "architecture": "character-embedding-cnn-3-5-plus-numeric-features",
+    "epochs": 40,
+    "best_epoch": 39,
+    "batch_size": 256,
+    "learning_rate": 0.001,
+    "loss": "binary_cross_entropy_with_logits_unweighted",
+    "target_error_recall": 0.98,
+    "seed": 20260909,
+    "device": "gpu:0"
+  },
+  "validation_metrics": {
+    "roc_auc": 0.7886197738456023,
+    "average_precision": 0.37748218408692585,
+    "precision_at_target_recall": 0.09547738693467336,
+    "recall": 0.9844559585492227,
+    "f1": 0.17407237746220794
+  },
+  "confidence_only_baseline": {
+    "roc_auc": 0.7882490957082804,
+    "average_precision": 0.25996910797095923,
+    "precision_at_target_recall": 0.13484740951029098,
+    "recall": 0.9844559585492227,
+    "f1": 0.23720349563046192
+  },
+  "decision": "Rejected because precision and F1 at the required 0.98 error recall are below the confidence-only baseline. The learned checkpoint is retained only as a reproducible research artifact.",
+  "test_evaluation_performed": false,
+  "promotion_blockers": [
+    "not_a_complete_model_a",
+    "no_independent_risk_test_split",
+    "training_labels_not_human_verified",
+    "upstream_ocr_ancestry_not_cryptographically_verified",
+    "source_document_lineage_not_carried_into_derived_rows",
+    "training_rights_manifest_missing"
+  ],
+  "artifact": {
+    "local_directory": "output/trained-model-a-line-risk-20260909-oof-e40",
+    "weights": "model.pdparams",
+    "weights_sha256": "5211f8e5ecd26a4352926a96721e96d7d0cad316ba7c839037dd1e3c4a7ba7db"
+  }
+}

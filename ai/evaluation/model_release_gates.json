@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "gate_set_id": "initial_v1",
+  "require_all_measurements": true,
+  "dataset_gates": {
+    "document_level_split": true,
+    "template_family_holdout": true,
+    "minimum_real_scan_test_documents": 50,
+    "minimum_real_scan_test_pages": 500
+  },
+  "metrics": [
+    {
+      "id": "model_a.overall_cer",
+      "comparator": "<=",
+      "threshold": 0.005
+    },
+    {
+      "id": "model_a.critical_token_error_rate",
+      "comparator": "<=",
+      "threshold": 0.001
+    },
+    {
+      "id": "model_a.role_macro_f1",
+      "comparator": ">=",
+      "threshold": 0.97
+    },
+    {
+      "id": "model_a.reading_order_exact_match",
+      "comparator": ">=",
+      "threshold": 0.99
+    },
+    {
+      "id": "model_a.reading_order_kendall_tau",
+      "comparator": ">=",
+      "threshold": 0.995
+    },
+    {
+      "id": "model_a.table_topology_exact_match",
+      "comparator": ">=",
+      "threshold": 0.95
+    },
+    {
+      "id": "model_a.formula_detection_recall",
+      "comparator": ">=",
+      "threshold": 0.98
+    },
+    {
+      "id": "model_a.normalized_formula_similarity",
+      "comparator": ">=",
+      "threshold": 0.97
+    },
+    {
+      "id": "model_b.schema_valid_rate",
+      "comparator": "==",
+      "threshold": 1.0
+    },
+    {
+      "id": "model_b.content_reference_coverage",
+      "comparator": "==",
+      "threshold": 1.0
+    },
+    {
+      "id": "model_b.unauthorized_content_changes",
+      "comparator": "==",
+      "threshold": 0.0
+    },
+    {
+      "id": "end_to_end.hwpx_package_valid_rate",
+      "comparator": "==",
+      "threshold": 1.0
+    },
+    {
+      "id": "end_to_end.dvc_validation_pass_rate",
+      "comparator": "==",
+      "threshold": 1.0
+    },
+    {
+      "id": "end_to_end.hancom_round_trip_pass_rate",
+      "comparator": "==",
+      "threshold": 1.0
+    },
+    {
+      "id": "end_to_end.auto_pass_acceptance_rate",
+      "comparator": ">=",
+      "threshold": 0.995
+    }
+  ]
+}
