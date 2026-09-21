@@ -3,6 +3,8 @@ from __future__ import annotations
 from scan2hwpx.blueprint import model_a
 from scan2hwpx.ir.models import BlockKind, Choice, Page, Question
 
+MAX_MISSED_QUESTIONS = 2
+
 
 def parse_questions(pages: list[Page]) -> list[Question]:
     questions: list[Question] = []
@@ -34,13 +36,24 @@ def parse_questions(pages: list[Page]) -> list[Question]:
         page_refs = []
         confidences = []
 
+    # Question numbers in reading order, so a stem can check whether a skipped
+    # number still appears later in the document.
+    numbers = [
+        model_a.match_question_number(block.text)
+        for page in pages
+        for block in sorted(page.blocks, key=lambda item: item.reading_order)
+    ]
+    position = 0
     for page in pages:
         for block in sorted(page.blocks, key=lambda item: item.reading_order):
-            question_number = model_a.match_question_number(block.text)
-            if question_number is not None and question_number == expected_number:
+            question_number = numbers[position]
+            position += 1
+            if question_number is not None and _starts_question(
+                question_number, expected_number, numbers[position:]
+            ):
                 flush()
                 current_number = question_number
-                expected_number += 1
+                expected_number = question_number + 1
                 current_score = model_a.match_score(block.text)
                 prompt_ids.append(block.id)
                 page_refs.append(page.page_no)
@@ -74,3 +87,17 @@ def parse_questions(pages: list[Page]) -> list[Question]:
             confidences.append(block.confidence)
     flush()
     return questions
+
+
+def _starts_question(number: int, expected: int, later_numbers: list[int | None]) -> bool:
+    """Accept the expected number, or skip numbers OCR dropped entirely.
+
+    Without the skip, one undetected stem (e.g. "15.") discards every later
+    question. A skip is allowed only when none of the skipped numbers appear
+    later, so an in-passage list item cannot jump ahead of a real stem.
+    """
+    if number == expected:
+        return True
+    if not expected < number <= expected + MAX_MISSED_QUESTIONS:
+        return False
+    return not any(skipped in later_numbers for skipped in range(expected, number))
