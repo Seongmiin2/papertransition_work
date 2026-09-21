@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import type { JobRecord } from "../types/contracts";
+import { CandidateReview } from "./CandidateReview";
 
 const MAX_BATCH_FILES = 10;
 
 export function App() {
+  const [view, setView] = useState<"convert" | "review">("convert");
+  const [reviewNavigationLocked, setReviewNavigationLocked] = useState(false);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [pending, setPending] = useState<string[]>([]);
   const refresh = () => window.exam2hwpx.listJobs().then(setJobs);
@@ -18,8 +21,8 @@ export function App() {
   const add = (paths: string[]) => setPending((old) => [...new Set([...old, ...paths.filter((p) => p.toLowerCase().endsWith(".pdf"))])].slice(0, MAX_BATCH_FILES));
   const start = async () => { if (!pending.length) return; await window.exam2hwpx.enqueue(pending); setPending([]); await refresh(); };
   return <div className="shell">
-    <aside><div className="brand"><span>문</span> Exam2HWPX</div><nav><button className="active">＋ 새 변환</button><button>작업 기록</button><button>모델 관리</button><button>설정</button></nav><small>로컬 처리 · 개인정보 보호</small></aside>
-    <main>
+    <aside><div className="brand"><span>문</span> Exam2HWPX</div><nav><button className={view === "convert" ? "active" : ""} disabled={view === "review" && reviewNavigationLocked} title={view === "review" && reviewNavigationLocked ? "검수 저장·충돌 처리를 마친 뒤 이동하세요." : undefined} onClick={() => setView("convert")}>＋ 새 변환</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>검수 후보</button><button disabled>모델 관리</button><button disabled>설정</button></nav><small>로컬 처리 · 개인정보 보호</small></aside>
+    {view === "review" ? <CandidateReview onNavigationLockChange={setReviewNavigationLocked} /> : <main>
       <header><div><h1>시험지 PDF를 편집 가능한 한글로</h1><p>파일은 이 컴퓨터에서 처리되며 외부로 전송되지 않습니다.</p></div><div className="local">● 로컬 OCR</div></header>
       <section className="card drop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add([...e.dataTransfer.files].map((f) => window.exam2hwpx.getPathForFile(f))); }}>
         <div className="fileIcon">PDF</div><h2>PDF를 여기에 끌어다 놓으세요</h2><p>한 번에 최대 10개까지 추가할 수 있습니다.</p>
@@ -27,7 +30,7 @@ export function App() {
       </section>
       {pending.length > 0 && <section className="card"><h2>변환할 파일 <em>{pending.length}</em></h2>{pending.map((p) => <div className="pending" key={p}><span>PDF</span><div><b>{p.split(/[\\/]/).pop()}</b><small>{p}</small></div><button onClick={() => setPending(pending.filter((x) => x !== p))}>삭제</button></div>)}<div className="actions"><label><input type="checkbox" defaultChecked /> 빨간 채점 표시 제거</label><button className="primary" onClick={() => void start()}>HWPX 변환 시작</button></div></section>}
       <section className="card"><div className="sectionTitle"><h2>작업 대기열</h2><button onClick={() => void refresh()}>새로고침</button></div>{jobs.length === 0 ? <div className="empty">아직 변환 작업이 없습니다.</div> : jobs.map((job) => <article className="job" key={job.id}><div className="jobTop"><div><b>{job.sourceName}</b><small>{label(job.status)}</small></div><strong className={`state ${job.status.toLowerCase()}`}>{label(job.status)}</strong></div><div className="progress"><i style={{width: `${job.progress * 100}%`}} /></div><div className="jobBottom"><span>{Math.round(job.progress * 100)}%</span><div>{job.outputPath && <button onClick={() => void window.exam2hwpx.openPath(job.outputPath!)}>HWPX 열기</button>}{!["COMPLETED","FAILED","CANCELLED"].includes(job.status) && <button onClick={() => void window.exam2hwpx.cancel(job.id)}>취소</button>}</div></div>{job.errorMessage && <p className="error">{job.errorMessage}</p>}</article>)}</section>
-    </main>
+    </main>}
   </div>;
 }
 

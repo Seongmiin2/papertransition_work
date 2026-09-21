@@ -1,14 +1,44 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, createReadStream, existsSync, mkdirSync, rmSync } from "node:fs";
-import { basename, delimiter, join, resolve } from "node:path";
+import {
+  copyFileSync,
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  rmSync,
+} from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { BrowserWindow as BrowserWindowType, IpcMainInvokeEvent } from "electron";
+import {
+  openCandidateReviewBundle,
+  type CandidateReviewBundle,
+} from "./candidate-review.js";
+import {
+  startOrReopenCandidateReviewDraft,
+  validateReviewerLabel,
+} from "./candidate-review-draft.js";
+import {
+  applyCandidateReviewDraftPatch,
+  completeCandidateReviewDraft,
+  isCandidateReviewDraftStaleError,
+  loadCandidateReviewDraftView,
+} from "./candidate-review-draft-patch.js";
+import {
+  parseCandidateReviewDraftCompletionRequest,
+  parseCandidateReviewDraftPatchRequest,
+} from "./candidate-review-ipc.js";
+import {
+  pythonRuntimeEnvironment,
+  selectPythonRuntime,
+} from "./python-runtime.js";
 import { JobDatabase } from "./database.js";
 import type { JobRecord } from "../types/contracts.js";
 
 let window: BrowserWindowType | null = null;
 let database: JobDatabase;
+let candidateReviewBundle: CandidateReviewBundle | null = null;
+let candidateReviewRoot: string | null = null;
 const MAX_BATCH_FILES = 10;
 const queue: string[] = [];
 let worker: ChildProcessWithoutNullStreams | null = null;
@@ -19,6 +49,41 @@ let quitting = false;
 
 function isTerminal(status: JobRecord["status"]): boolean {
   return status === "COMPLETED" || status === "FAILED" || status === "CANCELLED";
+}
+
+function selectedCandidateBundle(): CandidateReviewBundle {
+  if (!candidateReviewBundle) throw new Error("먼저 검수 후보 폴더를 선택하세요.");
+  candidateReviewBundle.assertCurrentSnapshot();
+  return candidateReviewBundle;
+}
+
+function ipcLineageId(value: unknown): string {
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+    throw new TypeError("잘못된 후보 문서 식별자입니다.");
+  }
+  return value;
+}
+
+function ipcPageNo(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new TypeError("잘못된 페이지 번호입니다.");
+  }
+  return value;
+}
+
+function ipcDraftRequest(value: unknown): { lineageId: string; reviewerLabel: string } {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("검수 초안 요청 형식이 올바르지 않습니다.");
+  }
+  const request = value as Record<string, unknown>;
+  const keys = Object.keys(request).sort();
+  if (keys.length !== 2 || keys[0] !== "lineageId" || keys[1] !== "reviewerLabel") {
+    throw new TypeError("검수 초안 요청 필드가 올바르지 않습니다.");
+  }
+  return {
+    lineageId: ipcLineageId(request.lineageId),
+    reviewerLabel: validateReviewerLabel(request.reviewerLabel),
+  };
 }
 
 async function sha256(path: string): Promise<string> {
@@ -112,21 +177,21 @@ function consumeWorkerOutput(data: Buffer): void {
   }
 }
 
-function ensureWorker(): ChildProcessWithoutNullStreams {
+async function ensureWorker(): Promise<ChildProcessWithoutNullStreams> {
   if (worker && worker.exitCode === null && !worker.killed) return worker;
   const projectRoot = app.getAppPath();
-  const venvPython = join(projectRoot, ".venv", "Scripts", "python.exe");
-  const pythonExecutable = existsSync(venvPython) ? venvPython : "python";
-  const workerPath = join(projectRoot, "src");
-  const workerEnv = {
-    ...process.env,
-    PYTHONPATH: [workerPath, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
-    PYTHONUTF8: "1"
-  };
+  const pythonExecutable = await selectPythonRuntime({
+    projectRoot,
+    requiredImports: ["scan2hwpx", "pydantic", "paddleocr"],
+  });
+  if (quitting) throw new Error("프로그램을 종료하고 있습니다.");
+  if (worker && worker.exitCode === null && !worker.killed) return worker;
   const child = spawn(pythonExecutable, ["-m", "scan2hwpx.worker"], {
     cwd: projectRoot,
-    env: workerEnv,
-    stdio: ["pipe", "pipe", "pipe"]
+    env: pythonRuntimeEnvironment(projectRoot),
+    shell: false,
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"],
   });
   worker = child;
   workerBuffer = "";
@@ -163,6 +228,7 @@ async function processQueue(): Promise<void> {
   const root = join(app.getPath("userData"), "jobs", id);
   const inputDir = join(root, "input");
   mkdirSync(inputDir, { recursive: true });
+  activeJobId = id;
   try {
     job = publish(database.transition(id, "STAGING", { progress: 0.03 }));
     const staged = join(inputDir, job.sourceName);
@@ -173,14 +239,23 @@ async function processQueue(): Promise<void> {
     const deployedModels = join(projectRoot, "ai", "production", "deployed");
     const pageAnomalyModel = join(deployedModels, "page-anomaly-v1", "page_anomaly_linear_autoencoder.npz");
     const recognitionModel = join(deployedModels, "korean-exam-ppocrv5");
-    const child = ensureWorker();
-    activeJobId = id;
+    const child = await ensureWorker();
+    if (quitting || isTerminal(database.get(id).status)) {
+      if (activeJobId === id) activeJobId = null;
+      rmSync(inputDir, { recursive: true, force: true });
+      if (!quitting) void processQueue();
+      return;
+    }
     workerStderr = "";
     child.stdin.write(JSON.stringify({ protocol_version: "1.0", request_id: id, method: "convert", params: { job_id: id, input_pdf: staged, work_dir: root, options: { mode: "fast", dpi: 120, device: "auto", renderer: "editable", write_diagnostics: false, recognition_model_dir: existsSync(join(recognitionModel, "inference.yml")) ? recognitionModel : null, page_anomaly_model: existsSync(pageAnomalyModel) ? pageAnomalyModel : null } } }) + "\n");
   } catch (error) {
     if (activeJobId === id) activeJobId = null;
     rmSync(inputDir, { recursive: true, force: true });
-    publish(database.transition(id, "FAILED", { errorMessage: error instanceof Error ? error.message : String(error) }));
+    if (!isTerminal(database.get(id).status)) {
+      publish(database.transition(id, "FAILED", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      }));
+    }
     void processQueue();
   }
 }
@@ -216,6 +291,110 @@ app.whenReady().then(() => {
     const current = database.get(id);
     if (!isTerminal(current.status)) publish(database.transition(id, "CANCELLED"));
     if (activeJobId === id && worker) terminateWorker(worker);
+  });
+  ipcMain.handle("review:select-bundle", async () => {
+    const selection = await dialog.showOpenDialog({ properties: ["openDirectory"] });
+    if (selection.canceled || !selection.filePaths.length) return null;
+    const nextBundle = openCandidateReviewBundle(selection.filePaths[0]);
+    candidateReviewBundle = nextBundle;
+    candidateReviewRoot = nextBundle.canonicalRootPath;
+    return { summary: nextBundle.summary, documents: nextBundle.documents };
+  });
+  ipcMain.handle("review:load-document", (_event, lineageId: unknown) =>
+    selectedCandidateBundle().loadDocument(ipcLineageId(lineageId)),
+  );
+  ipcMain.handle("review:load-page", (_event, lineageId: unknown, pageNo: unknown) =>
+    selectedCandidateBundle().readPageImageDataUrl(
+      ipcLineageId(lineageId),
+      ipcPageNo(pageNo),
+    ),
+  );
+  ipcMain.handle("review:start-or-reopen-draft", async (_event, value: unknown) => {
+    const request = ipcDraftRequest(value);
+    const bundle = selectedCandidateBundle();
+    const root = candidateReviewRoot;
+    if (!root) throw new Error("먼저 검수 후보 폴더를 선택하세요.");
+    const document = bundle.documents.find(
+      (candidate) => candidate.lineageId === request.lineageId,
+    );
+    if (!document) throw new Error("등록되지 않은 검수 후보 문서입니다.");
+    const bridgeOptions = {
+      projectRoot: app.getAppPath(),
+      userDataRoot: app.getPath("userData"),
+      candidateRoot: root,
+      manifestSha256: bundle.summary.manifestSha256,
+      lineageId: document.lineageId,
+      documentId: document.documentId,
+    };
+    const status = await startOrReopenCandidateReviewDraft({
+      ...bridgeOptions,
+      reviewerLabel: request.reviewerLabel,
+    });
+    const view = await loadCandidateReviewDraftView(bridgeOptions);
+    return { operation: status.operation, view };
+  });
+  ipcMain.handle("review:apply-draft-patch", async (_event, value: unknown) => {
+    const request = parseCandidateReviewDraftPatchRequest(value);
+    const bundle = selectedCandidateBundle();
+    const root = candidateReviewRoot;
+    if (!root) throw new Error("먼저 검수 후보 폴더를 선택하세요.");
+    const document = bundle.documents.find(
+      (candidate) => candidate.lineageId === request.lineageId,
+    );
+    if (!document) throw new Error("등록되지 않은 검수 후보 문서입니다.");
+    const bridgeOptions = {
+      projectRoot: app.getAppPath(),
+      userDataRoot: app.getPath("userData"),
+      candidateRoot: root,
+      manifestSha256: bundle.summary.manifestSha256,
+      lineageId: document.lineageId,
+      documentId: document.documentId,
+    };
+    try {
+      const view = await applyCandidateReviewDraftPatch({
+        ...bridgeOptions,
+        request: {
+          expectedDraftRevision: request.expectedDraftRevision,
+          operations: request.operations,
+        },
+      });
+      return { kind: "saved" as const, view };
+    } catch (error) {
+      if (!isCandidateReviewDraftStaleError(error)) throw error;
+      const currentView = await loadCandidateReviewDraftView(bridgeOptions);
+      return { kind: "stale_revision" as const, currentView };
+    }
+  });
+  ipcMain.handle("review:complete-draft", async (_event, value: unknown) => {
+    const request = parseCandidateReviewDraftCompletionRequest(value);
+    const bundle = selectedCandidateBundle();
+    const root = candidateReviewRoot;
+    if (!root) throw new Error("먼저 검수 후보 폴더를 선택하세요.");
+    const document = bundle.documents.find(
+      (candidate) => candidate.lineageId === request.lineageId,
+    );
+    if (!document) throw new Error("등록되지 않은 검수 후보 문서입니다.");
+    const bridgeOptions = {
+      projectRoot: app.getAppPath(),
+      userDataRoot: app.getPath("userData"),
+      candidateRoot: root,
+      manifestSha256: bundle.summary.manifestSha256,
+      lineageId: document.lineageId,
+      documentId: document.documentId,
+    };
+    try {
+      const view = await completeCandidateReviewDraft({
+        ...bridgeOptions,
+        request: {
+          expectedDraftRevision: request.expectedDraftRevision,
+        },
+      });
+      return { kind: "saved" as const, view };
+    } catch (error) {
+      if (!isCandidateReviewDraftStaleError(error)) throw error;
+      const currentView = await loadCandidateReviewDraftView(bridgeOptions);
+      return { kind: "stale_revision" as const, currentView };
+    }
   });
   ipcMain.handle("files:open", async (_event: IpcMainInvokeEvent, path: string) => { const error = await shell.openPath(path); if (error) throw new Error(error); });
   createWindow();

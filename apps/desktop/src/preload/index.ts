@@ -8,6 +8,17 @@ const api: Exam2HwpxApi = {
   listJobs: () => ipcRenderer.invoke("jobs:list"),
   cancel: (jobId) => ipcRenderer.invoke("jobs:cancel", jobId),
   openPath: (path) => ipcRenderer.invoke("files:open", path),
+  selectCandidateBundle: () => ipcRenderer.invoke("review:select-bundle"),
+  loadCandidateDocument: (lineageId) =>
+    ipcRenderer.invoke("review:load-document", lineageId),
+  loadCandidatePage: (lineageId, pageNo) =>
+    ipcRenderer.invoke("review:load-page", lineageId, pageNo),
+  startOrReopenCandidateReviewDraft: (request) =>
+    ipcRenderer.invoke("review:start-or-reopen-draft", request),
+  applyCandidateReviewDraftPatch: (request) =>
+    ipcRenderer.invoke("review:apply-draft-patch", request),
+  completeCandidateReviewDraft: (request) =>
+    ipcRenderer.invoke("review:complete-draft", request),
   onJobEvent: (callback) => {
     const listener = (_event: IpcRendererEvent, job: JobRecord) => callback(job);
     ipcRenderer.on("jobs:event", listener);
