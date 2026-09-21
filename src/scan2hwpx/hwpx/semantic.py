@@ -25,18 +25,25 @@ from .fidelity import HC, HP, OPF, render_fidelity_hwpx
 from .render import MIMETYPE
 
 HH = "http://www.hancom.co.kr/hwpml/2011/head"
-PAGE_WIDTH_HWP = 56_693
-PAGE_HEIGHT_HWP = 80_221
-CENTER_PARA_ID = "20"
+# Objects are anchored to the paper, so source pixels map onto the whole A4 sheet.
+PAGE_WIDTH_HWP = 59_527
+PAGE_HEIGHT_HWP = 84_189
 LEFT_PARA_ID = "11"
-BOLD_CHAR_ID = "7"
 REGULAR_CHAR_ID = "2"
+BODY_FONT_ID = "1"  # 함초롬바탕 in the template's font lists; exam body text is serif
 EDITABLE_TEXT_CONFIDENCE = 0.75
 FLOW_TEXT_HEIGHT = 800
-FLOW_LINE_SPACING = 135
+FLOW_LINE_PITCH = 1080
+TEXT_BOX_MARGIN_X = 120
+TEXT_BOX_MARGIN_Y = 80
+TABLE_CELL_MARGIN = 141
 # Hancom 2024 advances the template's body font by about 0.82 em per character
 # of Korean exam text including spaces (measured from its PDF output at 8 pt).
 HANCOM_ADVANCE_PER_EM = 0.82
+SPACE_ADVANCE_PER_EM = 0.3  # 함초롬바탕/돋움 space width
+# Hancom lays paragraph margins, spacing and FIXED line spacing out at half the
+# stored value (measured from its PDF output), so those lengths are stored doubled.
+PARA_LENGTH_SCALE = 2
 
 
 @dataclass(frozen=True)
@@ -50,10 +57,20 @@ class SemanticRenderStats:
     package_bytes: int
 
 
-@dataclass(frozen=True)
-class _FlowStyles:
-    char: dict[bool, str]  # by bold
-    para: dict[bool, str]  # by centered
+@dataclass
+class _Row:
+    """One visual line of source text.
+
+    segments are (source gap before it in pixels, text, bold) runs, and
+    em_width is the pixels per em of its text in 함초롬 fonts, if measurable.
+    """
+
+    segments: list[tuple[float, str, bool]]
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    em_width: float | None
 
 
 @dataclass(frozen=True)
@@ -61,6 +78,15 @@ class _ImageRegion:
     bbox: tuple[float, float, float, float]
     source_width: float
     source_height: float
+
+
+@dataclass(frozen=True)
+class _PageRegions:
+    images: list[_ImageRegion]
+    table_seeds: list[_ImageRegion]
+    passages: list[_ImageRegion]
+    grids: list[TableGrid]  # ruled tables rebuilt as editable tables
+    tables: list[_ImageRegion]  # their areas, whose text lives in the table cells
 
 
 def render_semantic_hwpx(
@@ -75,6 +101,12 @@ def render_semantic_hwpx(
     if len(page_images) != len(document.pages):
         raise ValueError("page image count and document page count differ")
     layout_pages = _read_layout_pages(layout_seed, len(page_images))
+    page_regions = [
+        _page_regions(page_path, ir_page, layout_page)
+        for page_path, ir_page, layout_page in zip(
+            page_images, document.pages, layout_pages, strict=True
+        )
+    ]
     temporary = output.with_name(f".{output.stem}.fidelity{output.suffix}")
     temporary.unlink(missing_ok=True)
     try:
@@ -82,7 +114,7 @@ def render_semantic_hwpx(
             clean_pages = _build_editable_backgrounds(
                 page_images,
                 document,
-                layout_pages,
+                page_regions,
                 Path(temporary_directory),
             )
             render_fidelity_hwpx(clean_pages, temporary)
@@ -95,7 +127,7 @@ def render_semantic_hwpx(
     manifest = etree.fromstring(members["Contents/content.hpf"])
     table_template, border_fill = _load_table_parts()
     _install_table_border_fill(header, border_fill)
-    _install_semantic_text_styles(header)
+    book = _StyleBook(header)
     advances: list[float] = []
     pitches: list[float] = []
     for ir_page in document.pages:
@@ -104,11 +136,8 @@ def render_semantic_hwpx(
         pitches.extend(page_pitches)
     document_metrics = _flow_metrics(advances, pitches, min_samples=10) or (
         FLOW_TEXT_HEIGHT,
-        FLOW_LINE_SPACING,
+        FLOW_LINE_PITCH,
     )
-    flow_styles: dict[tuple[int, int], _FlowStyles] = {}
-    document_styles = _flow_styles(header, flow_styles, *document_metrics)
-    ocr_text_styles = document_styles.char
     paragraphs = cast(list[etree._Element], section.xpath("./hp:p", namespaces={"hp": HP}))
     background_picture = cast(
         etree._Element,
@@ -121,38 +150,14 @@ def render_semantic_hwpx(
     editable_text_boxes = 0
     editable_text_characters = 0
     binary_assets: dict[str, bytes] = {}
-    for page_index, (page_path, ir_page, layout_page) in enumerate(
-        zip(page_images, document.pages, layout_pages, strict=True), start=1
+    for page_index, (page_path, ir_page, regions) in enumerate(
+        zip(page_images, document.pages, page_regions, strict=True), start=1
     ):
         with Image.open(page_path) as opened:
             page_width, page_height = opened.size
-        image_source = _ir_regions(ir_page, RegionPlacement.IMAGE, page_width, page_height)
-        if image_source is None:
-            image_source = _image_regions(layout_page)
-        scaled_images = [
-            _scale_region(item, float(page_width), float(page_height)) for item in image_source
-        ]
-        table_source = _ir_regions(ir_page, RegionPlacement.TABLE, page_width, page_height)
-        if table_source is None:
-            table_source = _table_regions(layout_page)
-        table_regions = [
-            _scale_region(item, float(page_width), float(page_height)) for item in table_source
-        ]
-        passage_source = _ir_regions(ir_page, RegionPlacement.PASSAGE_BOX, page_width, page_height)
-        if passage_source is None:
-            passage_source = _passage_regions(layout_page)
-        passage_regions = [
-            _scale_region(item, float(page_width), float(page_height)) for item in passage_source
-        ]
-        grids = [
-            _align_grid_to_seed(grid, table_regions)
-            for grid in detect_table_grids(page_path)
-            if _grid_matches_seed(grid, table_regions)
-        ]
-        page_binary = _binarize_page(page_path) if grids else None
-        for table_index, grid in enumerate(grids, start=1):
-            if any(_intersection_ratio(grid.bbox, image.bbox) >= 0.45 for image in scaled_images):
-                continue
+        scaled_images = regions.images
+        page_binary = _binarize_page(page_path) if regions.grids else None
+        for table_index, grid in enumerate(regions.grids, start=1):
             table = _build_table(
                 table_template,
                 grid,
@@ -160,7 +165,8 @@ def render_semantic_hwpx(
                 ir_page.blocks,
                 page_width,
                 page_height,
-                ocr_text_styles,
+                book,
+                document_metrics,
                 control_id=1_300_000_000 + page_index * 100 + table_index,
                 z_order=100 + editable_tables,
             )
@@ -168,9 +174,10 @@ def render_semantic_hwpx(
             editable_tables += 1
         passage_groups = _passage_groups(
             ir_page.blocks,
-            passage_regions,
+            regions.passages,
             scaled_images,
-            table_regions,
+            regions.table_seeds,
+            regions.tables,
             page_width,
             page_height,
         )
@@ -180,7 +187,8 @@ def render_semantic_hwpx(
                 passage_blocks,
                 page_width,
                 page_height,
-                document_styles,
+                book,
+                document_metrics,
                 control_id=1_450_000_000 + page_index * 100 + passage_index,
                 z_order=500 + editable_text_boxes,
             )
@@ -216,7 +224,7 @@ def render_semantic_hwpx(
         editable_blocks = [
             block
             for block in ir_page.blocks
-            if _eligible_editable_block(block, scaled_images, table_regions, page_height)
+            if _eligible_editable_block(block, scaled_images, regions.tables)
         ]
         for group_index, (bbox, flow_blocks) in enumerate(
             _column_flow_groups(ir_page, editable_blocks, page_width, page_height), start=1
@@ -229,7 +237,8 @@ def render_semantic_hwpx(
                 bbox,
                 page_width,
                 page_height,
-                styles=_flow_styles(header, flow_styles, *(box_metrics or document_metrics)),
+                book=book,
+                metrics=box_metrics or document_metrics,
                 control_id=1_500_000_000 + page_index * 100 + group_index,
                 z_order=1_000 + editable_text_boxes,
             )
@@ -251,6 +260,55 @@ def render_semantic_hwpx(
         editable_text_characters=editable_text_characters,
         package_bytes=output.stat().st_size,
     )
+
+
+def _page_regions(page_path: Path, ir_page: Any, layout_page: dict[str, Any]) -> _PageRegions:
+    with Image.open(page_path) as opened:
+        width, height = (float(value) for value in opened.size)
+
+    def scaled(placement: RegionPlacement, fallback: Any) -> list[_ImageRegion]:
+        source = _ir_regions(ir_page, placement, width, height)
+        if source is None:
+            source = fallback(layout_page)
+        return [_scale_region(item, width, height) for item in source]
+
+    images = scaled(RegionPlacement.IMAGE, _image_regions)
+    table_seeds = scaled(RegionPlacement.TABLE, _table_regions)
+    passages = scaled(RegionPlacement.PASSAGE_BOX, _passage_regions)
+    grids = []
+    for grid in detect_table_grids(page_path):
+        # Low-confidence ruled regions arrive as passage boxes; one that holds a
+        # ruled grid of at least 2x2 cells, none of them splitting a text line,
+        # is a table all the same.
+        seeds = table_seeds
+        if not _grid_matches_seed(grid, seeds):
+            if grid.rows < 2 or grid.columns < 2 or _grid_cuts_text(grid, ir_page.blocks):
+                continue
+            seeds = [*table_seeds, *passages]
+        if not _grid_matches_seed(grid, seeds):
+            continue
+        aligned = _align_grid_to_seed(grid, seeds)
+        if not any(_intersection_ratio(aligned.bbox, image.bbox) >= 0.45 for image in images):
+            grids.append(aligned)
+    return _PageRegions(
+        images=images,
+        table_seeds=table_seeds,
+        passages=passages,
+        grids=grids,
+        tables=[_ImageRegion(grid.bbox, width, height) for grid in grids],
+    )
+
+
+def _grid_cuts_text(grid: TableGrid, blocks: list[Any]) -> bool:
+    x0, y0, x1, y1 = grid.bbox
+    for block in blocks:
+        bx0, by0, bx1, by1 = (float(value) for value in block.bbox.pixel)
+        if bx1 <= x0 or bx0 >= x1 or by1 <= y0 or by0 >= y1:
+            continue
+        inset = (by1 - by0) * 0.25
+        if any(by0 + inset < line < by1 - inset for line in grid.y_lines[1:-1]):
+            return True
+    return False
 
 
 def _read_layout_pages(path: Path, expected_pages: int) -> list[dict[str, Any]]:
@@ -318,42 +376,6 @@ def _install_table_border_fill(header: etree._Element, source: etree._Element) -
     container.set("itemCnt", str(len(container)))
 
 
-def _install_semantic_text_styles(header: etree._Element) -> None:
-    para_containers = cast(
-        list[etree._Element],
-        header.xpath(".//hh:paraProperties", namespaces={"hh": HH}),
-    )
-    char_containers = cast(
-        list[etree._Element],
-        header.xpath(".//hh:charProperties", namespaces={"hh": HH}),
-    )
-    if len(para_containers) != 1 or len(char_containers) != 1:
-        raise RuntimeError("HWPX text style lists are invalid")
-    para_container = para_containers[0]
-    left_source = cast(
-        etree._Element,
-        para_container.xpath(f"./hh:paraPr[@id='{LEFT_PARA_ID}']", namespaces={"hh": HH})[0],
-    )
-    if not para_container.xpath(f"./hh:paraPr[@id='{CENTER_PARA_ID}']", namespaces={"hh": HH}):
-        centered = copy.deepcopy(left_source)
-        centered.set("id", CENTER_PARA_ID)
-        align = cast(etree._Element, centered.xpath("./hh:align", namespaces={"hh": HH})[0])
-        align.set("horizontal", "CENTER")
-        para_container.append(centered)
-    para_container.set("itemCnt", str(len(para_container)))
-    char_container = char_containers[0]
-    if not char_container.xpath(f"./hh:charPr[@id='{BOLD_CHAR_ID}']", namespaces={"hh": HH}):
-        source = cast(
-            etree._Element,
-            char_container.xpath(f"./hh:charPr[@id='{REGULAR_CHAR_ID}']", namespaces={"hh": HH})[0],
-        )
-        bold = copy.deepcopy(source)
-        bold.set("id", BOLD_CHAR_ID)
-        etree.SubElement(bold, f"{{{HH}}}bold")
-        char_container.append(bold)
-    char_container.set("itemCnt", str(len(char_container)))
-
-
 def _flow_samples(
     blocks: list[Any], page_width: float, page_height: float
 ) -> tuple[list[float], list[float]]:
@@ -383,73 +405,91 @@ def _flow_samples(
 def _flow_metrics(
     advances: list[float], pitches: list[float], *, min_samples: int
 ) -> tuple[int, int] | None:
-    """Font height (HWPUNIT) and line-spacing percent that reproduce the source text.
+    """Font height and line pitch (both HWPUNIT) that reproduce the source text.
 
-    Reflowed text stays near its source position only if Hancom wraps lines at
-    about the same characters and advances each line by the source line pitch.
     Text density differs between pages and columns, so callers measure per box.
     """
     if len(advances) < min_samples or len(pitches) < min_samples:
         return None
     font_height = float(np.median(advances)) / HANCOM_ADVANCE_PER_EM
     font_height = round(min(1200.0, max(600.0, font_height)) / 10) * 10
-    line_spacing = round(float(np.median(pitches)) / font_height * 100)
-    return int(font_height), min(250, max(100, line_spacing))
+    pitch = round(float(np.median(pitches)) / 10) * 10
+    return int(font_height), int(min(font_height * 2.5, max(font_height, pitch)))
 
 
-def _flow_styles(
-    header: etree._Element,
-    cache: dict[tuple[int, int], _FlowStyles],
-    font_height: int,
-    line_spacing: int,
-) -> _FlowStyles:
-    """Character and paragraph styles for flow text, created once per metric pair."""
-    key = (font_height, line_spacing)
-    if key in cache:
-        return cache[key]
-    char_containers = cast(
-        list[etree._Element],
-        header.xpath(".//hh:charProperties", namespaces={"hh": HH}),
-    )
-    para_containers = cast(
-        list[etree._Element],
-        header.xpath(".//hh:paraProperties", namespaces={"hh": HH}),
-    )
-    if len(char_containers) != 1 or len(para_containers) != 1:
-        raise RuntimeError("HWPX text style lists are invalid")
-    char_container, para_container = char_containers[0], para_containers[0]
-    char_sources = cast(
-        list[etree._Element],
-        char_container.xpath(f"./hh:charPr[@id='{REGULAR_CHAR_ID}']", namespaces={"hh": HH}),
-    )
-    para_sources = cast(
-        list[etree._Element],
-        para_container.xpath(f"./hh:paraPr[@id='{LEFT_PARA_ID}']", namespaces={"hh": HH}),
-    )
-    if len(char_sources) != 1 or len(para_sources) != 1:
-        raise RuntimeError("regular HWPX text styles are missing")
-    char_ids: dict[bool, str] = {}
-    for bold in (False, True):
-        char_style = copy.deepcopy(char_sources[0])
-        char_style.set("height", str(font_height))
-        char_style.set("textColor", "#000000")
-        for existing_bold in char_style.xpath("./hh:bold", namespaces={"hh": HH}):
-            char_style.remove(existing_bold)
-        if bold:
-            etree.SubElement(char_style, f"{{{HH}}}bold")
-        char_ids[bold] = _append_style(char_container, char_style)
-    para_ids: dict[bool, str] = {}
-    for centered in (False, True):
-        para_style = copy.deepcopy(para_sources[0])
-        para_style.set("snapToGrid", "0")
-        align = cast(etree._Element, para_style.xpath("./hh:align", namespaces={"hh": HH})[0])
-        align.set("horizontal", "CENTER" if centered else "LEFT")
-        for spacing in para_style.xpath(".//hh:lineSpacing", namespaces={"hh": HH}):
-            spacing.set("type", "PERCENT")
-            spacing.set("value", str(line_spacing))
-        para_ids[centered] = _append_style(para_container, para_style)
-    cache[key] = _FlowStyles(char=char_ids, para=para_ids)
-    return cache[key]
+class _StyleBook:
+    """Character and paragraph styles, added to the header on first use."""
+
+    def __init__(self, header: etree._Element) -> None:
+        char_containers = cast(
+            list[etree._Element],
+            header.xpath(".//hh:charProperties", namespaces={"hh": HH}),
+        )
+        para_containers = cast(
+            list[etree._Element],
+            header.xpath(".//hh:paraProperties", namespaces={"hh": HH}),
+        )
+        if len(char_containers) != 1 or len(para_containers) != 1:
+            raise RuntimeError("HWPX text style lists are invalid")
+        self._chars, self._paras = char_containers[0], para_containers[0]
+        char_sources = cast(
+            list[etree._Element],
+            self._chars.xpath(f"./hh:charPr[@id='{REGULAR_CHAR_ID}']", namespaces={"hh": HH}),
+        )
+        para_sources = cast(
+            list[etree._Element],
+            self._paras.xpath(f"./hh:paraPr[@id='{LEFT_PARA_ID}']", namespaces={"hh": HH}),
+        )
+        if len(char_sources) != 1 or len(para_sources) != 1:
+            raise RuntimeError("regular HWPX text styles are missing")
+        self._char_source, self._para_source = char_sources[0], para_sources[0]
+        self._char_ids: dict[tuple[int, bool], str] = {}
+        self._para_ids: dict[tuple[str, int, int, int, int], str] = {}
+
+    def char(self, height: int, bold: bool) -> str:
+        key = (height, bold)
+        if key not in self._char_ids:
+            style = copy.deepcopy(self._char_source)
+            style.set("height", str(height))
+            style.set("textColor", "#000000")
+            font_ref = cast(etree._Element, style.xpath("./hh:fontRef", namespaces={"hh": HH})[0])
+            for language in font_ref.attrib:
+                font_ref.set(language, BODY_FONT_ID)
+            for existing_bold in style.xpath("./hh:bold", namespaces={"hh": HH}):
+                style.remove(existing_bold)
+            if bold:
+                etree.SubElement(style, f"{{{HH}}}bold")
+            self._char_ids[key] = _append_style(self._chars, style)
+        return self._char_ids[key]
+
+    def line(
+        self, *, pitch: int, align: str = "LEFT", left: int = 0, right: int = 0, prev: int = 0
+    ) -> str:
+        """A paragraph holding one source line at a fixed pitch (all lengths HWPUNIT).
+
+        Hancom squeezes the line rather than wrapping it, so a font that runs a
+        little wider than the scan can never push the following lines down.
+        """
+        key = (align, left, right, prev, pitch)
+        if key not in self._para_ids:
+            style = copy.deepcopy(self._para_source)
+            style.set("snapToGrid", "0")
+            align_element = cast(
+                etree._Element, style.xpath("./hh:align", namespaces={"hh": HH})[0]
+            )
+            align_element.set("horizontal", align)
+            for setting in style.xpath(".//hh:breakSetting", namespaces={"hh": HH}):
+                setting.set("lineWrap", "SQUEEZE")
+            for spacing in style.xpath(".//hh:lineSpacing", namespaces={"hh": HH}):
+                spacing.set("type", "FIXED")
+                spacing.set("value", str(pitch * PARA_LENGTH_SCALE))
+            for name, value in (("left", left), ("right", right), ("prev", prev)):
+                for margin in style.xpath(
+                    f".//hh:margin/hc:{name}", namespaces={"hh": HH, "hc": HC}
+                ):
+                    margin.set("value", str(value * PARA_LENGTH_SCALE))
+            self._para_ids[key] = _append_style(self._paras, style)
+        return self._para_ids[key]
 
 
 def _append_style(container: etree._Element, style: etree._Element) -> str:
@@ -468,34 +508,22 @@ def _ocr_bold(block: Any) -> bool:
 def _build_editable_backgrounds(
     page_images: list[Path],
     document: Document,
-    layout_pages: list[dict[str, Any]],
+    page_regions: list[_PageRegions],
     output_dir: Path,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     result: list[Path] = []
-    for page_index, (page_path, ir_page, layout_page) in enumerate(
-        zip(page_images, document.pages, layout_pages, strict=True), start=1
+    for page_index, (page_path, ir_page, regions) in enumerate(
+        zip(page_images, document.pages, page_regions, strict=True), start=1
     ):
         with Image.open(page_path) as opened:
             source_rgb = np.asarray(opened.convert("RGB"), dtype=np.uint8)
         image = Image.fromarray(preprocess_for_ocr(source_rgb).image)
         page_width, page_height = image.size
-        image_source = _ir_regions(ir_page, RegionPlacement.IMAGE, page_width, page_height)
-        if image_source is None:
-            image_source = _image_regions(layout_page)
-        image_regions = [
-            _scale_region(item, float(page_width), float(page_height)) for item in image_source
-        ]
-        table_source = _ir_regions(ir_page, RegionPlacement.TABLE, page_width, page_height)
-        if table_source is None:
-            table_source = _table_regions(layout_page)
-        table_regions = [
-            _scale_region(item, float(page_width), float(page_height)) for item in table_source
-        ]
         array = np.asarray(image, dtype=np.uint8)
         draw = ImageDraw.Draw(image)
         for block in ir_page.blocks:
-            if not _eligible_editable_block(block, image_regions, table_regions, page_height):
+            if not _eligible_editable_block(block, regions.images, regions.tables):
                 continue
             x0, y0, x1, y1 = _clamped_pixel_box(block.bbox.pixel, page_width, page_height)
             if x1 <= x0 or y1 <= y0:
@@ -511,7 +539,6 @@ def _eligible_editable_block(
     block: Any,
     image_regions: list[_ImageRegion],
     table_regions: list[_ImageRegion],
-    page_height: float,
 ) -> bool:
     text = str(block.text).strip()
     if not text or float(block.confidence) < EDITABLE_TEXT_CONFIDENCE:
@@ -526,13 +553,9 @@ def _eligible_editable_block(
         float(raw_bbox[3]),
     )
     kind = getattr(block.kind, "value", str(block.kind))
-    if kind == "page_number":
-        return False
     if kind == "header" and bbox[3] - bbox[1] > (bbox[2] - bbox[0]) * 1.5:
         return False
-    if kind == "footer" and (
-        bbox[1] >= page_height * 0.935 or ("정기시험" in text and "쪽" in text) or "저작권" in text
-    ):
+    if kind == "footer" and "저작권" in text:
         return False
     return not any(
         _intersection_ratio(bbox, region.bbox) >= 0.35
@@ -579,7 +602,8 @@ def _build_text_box(
     page_width: int,
     page_height: int,
     *,
-    styles: _FlowStyles,
+    book: _StyleBook,
+    metrics: tuple[int, int],
     control_id: int,
     z_order: int,
 ) -> etree._Element:
@@ -671,14 +695,14 @@ def _build_text_box(
         hasTextRef="0",
         hasNumRef="0",
     )
-    _write_flow_paragraphs(sublist, blocks, bbox, styles)
+    _write_line_paragraphs(sublist, blocks, bbox, page_width, page_height, book, metrics)
     etree.SubElement(
         draw_text,
         f"{{{HP}}}textMargin",
-        left="120",
-        right="120",
-        top="80",
-        bottom="80",
+        left=str(TEXT_BOX_MARGIN_X),
+        right=str(TEXT_BOX_MARGIN_X),
+        top=str(TEXT_BOX_MARGIN_Y),
+        bottom=str(TEXT_BOX_MARGIN_Y),
     )
     etree.SubElement(rectangle, f"{{{HC}}}pt0", x="0", y="0")
     etree.SubElement(rectangle, f"{{{HC}}}pt1", x=str(width), y="0")
@@ -719,7 +743,8 @@ def _build_passage_outline(
     blocks: list[Any],
     page_width: int,
     page_height: int,
-    styles: _FlowStyles,
+    book: _StyleBook,
+    metrics: tuple[int, int],
     *,
     control_id: int,
     z_order: int,
@@ -739,7 +764,8 @@ def _build_passage_outline(
         ),
         page_width,
         page_height,
-        styles=styles,
+        book=book,
+        metrics=metrics,
         control_id=control_id,
         z_order=z_order,
     )
@@ -849,7 +875,11 @@ def _column_flow_groups(
         if not selected:
             continue
         assigned.update(str(block.id) for block in selected)
-        left = max(cx0 + page_width * 0.012, min(float(block.bbox.pixel[0]) for block in selected))
+        left = max(
+            0.0,
+            min(float(block.bbox.pixel[0]) for block in selected)
+            - TEXT_BOX_MARGIN_X * page_width / PAGE_WIDTH_HWP,
+        )
         right = min(
             cx1 - page_width * 0.012,
             max(
@@ -857,7 +887,11 @@ def _column_flow_groups(
                 cx1 - page_width * 0.03,
             ),
         )
-        top = min(float(block.bbox.pixel[1]) for block in selected)
+        top = max(
+            0.0,
+            min(float(block.bbox.pixel[1]) for block in selected)
+            - TEXT_BOX_MARGIN_Y * page_height / PAGE_HEIGHT_HWP,
+        )
         bottom = max(
             max(float(block.bbox.pixel[3]) for block in selected) + page_height * 0.01,
             page_height * 0.925,
@@ -882,136 +916,170 @@ def _column_flow_groups(
     return groups
 
 
-def _write_flow_paragraphs(
+def _write_line_paragraphs(
     sublist: etree._Element,
     blocks: list[Any],
     bbox: tuple[float, float, float, float],
-    styles: _FlowStyles,
+    page_width: int,
+    page_height: int,
+    book: _StyleBook,
+    metrics: tuple[int, int],
 ) -> None:
-    def append_paragraph(text_value: str, *, bold: bool, centered: bool) -> None:
+    """One paragraph per source line, each placed at its source indent and height.
+
+    A line advances to the next source line by its own fixed pitch, and a
+    paragraph's spacing-before absorbs larger gaps. Both are measured from where
+    Hancom put the previous line, so rounding errors never accumulate.
+    """
+    font_height, pitch = metrics
+    x_scale = PAGE_WIDTH_HWP / page_width
+    y_scale = PAGE_HEIGHT_HWP / page_height
+    rows = _source_rows(blocks)
+    typical_height = float(np.median([row.y1 - row.y0 for row in rows]))
+    em_widths = [row.em_width for row in rows if row.em_width is not None]
+    typical_em = float(np.median(em_widths)) if em_widths else None
+    box_width = bbox[2] - bbox[0]
+    wide = [row.x1 for row in rows if row.x1 - row.x0 >= box_width * 0.6]
+    text_right = float(np.percentile(wide, 90)) if wide else float("inf")
+    targets = [round((row.y0 - bbox[1]) * y_scale) - TEXT_BOX_MARGIN_Y for row in rows]
+    cursor = 0
+    for index, row in enumerate(rows):
+        height = font_height
+        if row.em_width is not None and typical_em is not None:
+            # Titles and small print keep their relative size. OCR boxes widened by
+            # pen marks are not taller, so width alone does not resize a line.
+            ratio = row.em_width / typical_em
+            taller = (row.y1 - row.y0) / max(1.0, typical_height)
+            if (ratio > 1.15 and taller >= 1.1) or (ratio < 0.85 and taller <= 0.9):
+                height = round(font_height * min(2.5, max(0.6, ratio)) / 50) * 50
+        prev = max(0, round((targets[index] - cursor) / 50) * 50)
+        top = cursor + prev
+        line_pitch = pitch
+        if index + 1 < len(rows):
+            step = targets[index + 1] - top
+            if step <= pitch * 1.5:
+                line_pitch = max(round(height * 0.5), round(step / 50) * 50)
+        cursor = top + line_pitch
+        # A single run that reaches the right edge is justified text in the source.
+        justified = (
+            len(row.segments) == 1
+            and row.x1 - row.x0 >= box_width * 0.6
+            and row.x1 >= text_right - typical_height * 0.5
+        )
+        left = round(((row.x0 - bbox[0]) * x_scale - TEXT_BOX_MARGIN_X) / 100) * 100
+        right = round(((bbox[2] - row.x1) * x_scale - TEXT_BOX_MARGIN_X) / 100) * 100
         paragraph = etree.SubElement(
             sublist,
             f"{{{HP}}}p",
             id="0",
-            paraPrIDRef=styles.para[centered],
+            paraPrIDRef=book.line(
+                pitch=line_pitch,
+                align="DISTRIBUTE_SPACE" if justified else "LEFT",
+                left=max(0, left),
+                right=max(0, right) if justified else 0,
+                prev=prev,
+            ),
             styleIDRef="0",
             pageBreak="0",
             columnBreak="0",
             merged="0",
         )
+        _append_runs(paragraph, row.segments, book, height, SPACE_ADVANCE_PER_EM * height / x_scale)
+
+
+def _append_runs(
+    paragraph: etree._Element,
+    segments: list[tuple[float, str, bool]],
+    book: _StyleBook,
+    height: int,
+    space_width: float,
+    *,
+    bold: bool = False,
+) -> None:
+    """Write a line's runs, filling each source gap with spaces of space_width px."""
+    for index, (gap, text_value, segment_bold) in enumerate(segments):
+        if index:
+            text_value = " " * max(1, round(gap / max(1.0, space_width))) + text_value
         run = etree.SubElement(
-            paragraph,
-            f"{{{HP}}}run",
-            charPrIDRef=styles.char[bold],
+            paragraph, f"{{{HP}}}run", charPrIDRef=book.char(height, bold or segment_bold)
         )
+        if not text_value:
+            continue
         text = etree.SubElement(run, f"{{{HP}}}t")
         text.text = text_value
-        if text_value == " ":
+        if text_value != text_value.strip():
             text.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
 
-    for text, bold, centered, blank_lines in _flow_paragraphs(blocks, bbox):
-        for _ in range(blank_lines):
-            append_paragraph(" ", bold=False, centered=False)
-        append_paragraph(text, bold=bold, centered=centered)
 
-
-def _flow_paragraphs(
-    blocks: list[Any], bbox: tuple[float, float, float, float]
-) -> list[tuple[str, bool, bool, int]]:
+def _source_rows(blocks: list[Any]) -> list[_Row]:
+    """Group OCR blocks into visual lines, top to bottom and left to right."""
     ordered = sorted(
         blocks,
-        key=lambda block: (
-            float(block.bbox.pixel[1]),
-            float(block.bbox.pixel[0]),
-            int(block.reading_order),
-        ),
+        key=lambda block: (float(block.bbox.pixel[1]) + float(block.bbox.pixel[3])) / 2,
     )
     heights = [
         max(1.0, float(block.bbox.pixel[3]) - float(block.bbox.pixel[1])) for block in ordered
     ]
     typical_height = float(np.median(heights)) if heights else 24.0
-    steps = [
-        float(lower.bbox.pixel[1]) - float(upper.bbox.pixel[1])
-        for upper, lower in pairwise(ordered)
-    ]
-    pitches = [step for step in steps if typical_height * 0.8 < step < typical_height * 1.8]
-    line_pitch = float(np.median(pitches)) if pitches else typical_height * 1.15
-    # A line that stops well short of the text's right edge ends there in the
-    # source (poem lines, list items, paragraph ends), so it must not be joined.
-    text_right = float(np.percentile([float(block.bbox.pixel[2]) for block in ordered], 90))
-    result: list[dict[str, Any]] = []
-    box_center = (bbox[0] + bbox[2]) / 2
-    box_width = max(1.0, bbox[2] - bbox[0])
+    lines: list[list[Any]] = []
     for block in ordered:
-        text = str(block.text).strip()
-        x0, y0, x1, y1 = (float(value) for value in block.bbox.pixel)
-        center = (y0 + y1) / 2
-        bold = _ocr_bold(block)
-        same_row = bool(result) and abs(center - float(result[-1]["last_center"])) <= typical_height * 0.45
-        gap = float("inf") if not result else y0 - float(result[-1]["y1"])
-        starts_paragraph = re.match(
-            r"^(?:\d{1,3}[.)]\s|[①-⑳㉠-㉻○●•]|\([가-힣A-Za-z0-9]+\)|\[[^]]+\]|-?\s*<[^>]{1,16}>)",
-            text,
-        )
-        new_paragraph = (
-            not result
-            or not same_row
-            and (
-                gap > typical_height * 0.55
-                or starts_paragraph is not None
-                or bold != bool(result[-1]["bold"])
-                or float(result[-1]["last_x1"]) < text_right - typical_height * 1.5
+        center = (float(block.bbox.pixel[1]) + float(block.bbox.pixel[3])) / 2
+        if lines:
+            line_center = float(
+                np.mean([(float(b.bbox.pixel[1]) + float(b.bbox.pixel[3])) / 2 for b in lines[-1]])
             )
-        )
-        if not new_paragraph:
-            if same_row:
-                horizontal_gap = max(0.0, x0 - float(result[-1]["last_x1"]))
-                separator = " " * max(
-                    1, min(5, round(horizontal_gap / max(1.0, typical_height)))
+            if abs(center - line_center) <= typical_height * 0.45:
+                lines[-1].append(block)
+                continue
+        lines.append([block])
+    rows: list[_Row] = []
+    for line in lines:
+        line.sort(key=lambda block: float(block.bbox.pixel[0]))
+        segments: list[tuple[float, str, bool]] = []
+        previous_x1: float | None = None
+        ink = 0.0
+        ems = 0.0
+        for block in line:
+            text = str(block.text).strip()
+            if not text:
+                continue
+            x0, _y0, x1, _y1 = (float(value) for value in block.bbox.pixel)
+            gap = 0.0 if previous_x1 is None else x0 - previous_x1
+            segments.append((gap, text, _ocr_bold(block)))
+            previous_x1 = x1
+            ink += x1 - x0
+            ems += _em_width(text)
+        if segments:
+            rows.append(
+                _Row(
+                    segments=segments,
+                    x0=min(float(block.bbox.pixel[0]) for block in line),
+                    y0=min(float(block.bbox.pixel[1]) for block in line),
+                    x1=max(float(block.bbox.pixel[2]) for block in line),
+                    y1=max(float(block.bbox.pixel[3]) for block in line),
+                    em_width=ink / ems if ems >= 5 else None,
                 )
-            else:
-                separator = " "
-                result[-1]["centered"] = False
-            result[-1]["text"] = f"{result[-1]['text']}{separator}{text}"
-            result[-1]["x0"] = min(float(result[-1]["x0"]), x0)
-            result[-1]["x1"] = max(float(result[-1]["x1"]), x1)
-            result[-1]["y1"] = max(float(result[-1]["y1"]), y1)
-            result[-1]["last_center"] = center
-            result[-1]["last_x1"] = x1
-            if not same_row:
-                result[-1]["last_y0"] = y0
-            continue
-        blank_lines = 0
-        if result:
-            # Each output paragraph advances one line pitch, so pad with the lines
-            # the source skipped between the previous line's top and this one.
-            source_lines = round((y0 - float(result[-1]["last_y0"])) / line_pitch)
-            blank_lines = min(20, max(0, source_lines - 1))
-        row_center = (x0 + x1) / 2
-        centered = (
-            re.fullmatch(r"-?\s*<[^>]{1,16}>\s*-?", text) is not None
-            or (
-                x1 - x0 < box_width * 0.72 and abs(row_center - box_center) < box_width * 0.08
             )
-        )
-        result.append(
-            {
-                "text": text,
-                "bold": bold,
-                "centered": centered,
-                "blank_lines": blank_lines,
-                "x0": x0,
-                "x1": x1,
-                "y1": y1,
-                "last_center": center,
-                "last_x1": x1,
-                "last_y0": y0,
-            }
-        )
-    return [
-        (str(item["text"]), bool(item["bold"]), bool(item["centered"]), int(item["blank_lines"]))
-        for item in result
-    ]
+    return rows
+
+
+def _em_width(text: str) -> float:
+    """Advance of text in 함초롬바탕/돋움, in em (measured from the font files)."""
+    width = 0.0
+    for char in text:
+        if not char.isascii():
+            width += 0.97
+        elif char == " ":
+            width += SPACE_ADVANCE_PER_EM
+        elif char in "[](),.:;!'\"":
+            width += 0.32
+        elif char.isupper():
+            width += 0.7
+        elif char.islower():
+            width += 0.52
+        else:  # digits and the remaining symbols
+            width += 0.55
+    return width
 
 
 def _build_table(
@@ -1021,7 +1089,8 @@ def _build_table(
     blocks: list[Any],
     page_width: int,
     page_height: int,
-    ocr_text_styles: dict[bool, str],
+    book: _StyleBook,
+    metrics: tuple[int, int],
     *,
     control_id: int,
     z_order: int,
@@ -1040,6 +1109,10 @@ def _build_table(
     table.set("colCnt", str(grid.columns))
     table.set("textWrap", "IN_FRONT_OF_TEXT")
     table.set("repeatHeader", "0")
+    # The template's 5 mm side margins squeeze narrow label columns.
+    in_margin = cast(etree._Element, table.xpath("./hp:inMargin", namespaces={"hp": HP})[0])
+    for side in ("left", "right", "top", "bottom"):
+        in_margin.set(side, str(TABLE_CELL_MARGIN))
     x_lines = grid.x_lines
     y_lines = grid.y_lines
     total_width = _x_hwp(x_lines[-1] - x_lines[0], page_width)
@@ -1084,9 +1157,8 @@ def _build_table(
                     )
                 ),
             )
-            cell_size.set(
-                "height", str(_y_hwp(y_lines[row_index + 1] - y_lines[row_index], page_height))
-            )
+            cell_height = _y_hwp(y_lines[row_index + 1] - y_lines[row_index], page_height)
+            cell_size.set("height", str(cell_height))
             lines = _cell_lines(
                 blocks,
                 (
@@ -1104,8 +1176,10 @@ def _build_table(
                 < 0.3
                 or grid.columns >= 3,
                 bold=column_index == 0,
-                page_height=page_height,
-                ocr_text_styles=ocr_text_styles,
+                cell_height=cell_height,
+                x_scale=PAGE_WIDTH_HWP / page_width,
+                book=book,
+                metrics=metrics,
             )
             row.append(cell)
         table.append(row)
@@ -1160,31 +1234,36 @@ def _write_cell_paragraphs(
     *,
     centered: bool,
     bold: bool,
-    page_height: float,
-    ocr_text_styles: dict[bool, str],
+    cell_height: int,
+    x_scale: float,
+    book: _StyleBook,
+    metrics: tuple[int, int],
 ) -> None:
+    """Write a cell's source lines so they fit its source height; Hancom grows
+    a row whose text does not fit, which pushes the table over what follows."""
     sublist = cast(
         etree._Element,
         cell.xpath("./hp:subList", namespaces={"hp": HP})[0],
     )
     for paragraph in sublist.xpath("./hp:p", namespaces={"hp": HP}):
         sublist.remove(paragraph)
-    for block in lines or [None]:
+    rows = _source_rows(lines)
+    font_height, pitch = metrics
+    pitch = min(pitch, (cell_height - 2 * TABLE_CELL_MARGIN) // max(1, len(rows)))
+    pitch = max(100, pitch // 10 * 10)
+    height = max(500, min(font_height, round(pitch * 0.9 / 50) * 50))
+    paragraph_style = book.line(pitch=pitch, align="CENTER" if centered else "LEFT")
+    for segments in [row.segments for row in rows] or [[(0.0, "", False)]]:
         paragraph = etree.SubElement(sublist, f"{{{HP}}}p")
         paragraph.set("id", "0")
-        paragraph.set("paraPrIDRef", CENTER_PARA_ID if centered else LEFT_PARA_ID)
+        paragraph.set("paraPrIDRef", paragraph_style)
         paragraph.set("styleIDRef", "0")
         paragraph.set("pageBreak", "0")
         paragraph.set("columnBreak", "0")
         paragraph.set("merged", "0")
-        run = etree.SubElement(paragraph, f"{{{HP}}}run")
-        if block is None:
-            run.set("charPrIDRef", BOLD_CHAR_ID if bold else REGULAR_CHAR_ID)
-        else:
-            run.set("charPrIDRef", ocr_text_styles[bold or _ocr_bold(block)])
-        if block is not None:
-            text = etree.SubElement(run, f"{{{HP}}}t")
-            text.text = str(block.text).strip()
+        _append_runs(
+            paragraph, segments, book, height, SPACE_ADVANCE_PER_EM * height / x_scale, bold=bold
+        )
 
 
 def _ir_regions(
@@ -1283,6 +1362,7 @@ def _passage_groups(
     regions: list[_ImageRegion],
     image_regions: list[_ImageRegion],
     table_regions: list[_ImageRegion],
+    editable_tables: list[_ImageRegion],
     page_width: int,
     page_height: int,
 ) -> list[tuple[_ImageRegion, list[Any]]]:
@@ -1294,7 +1374,10 @@ def _passage_groups(
         and region.bbox[3] - region.bbox[1] >= page_height * 0.045
         and region.bbox[1] >= page_height * 0.09
         and region.bbox[3] <= page_height * 0.95
-        and not any(_intersection_ratio(region.bbox, table.bbox) >= 0.5 for table in table_regions)
+        and not any(
+            _intersection_ratio(region.bbox, table.bbox) >= 0.5
+            for table in [*table_regions, *editable_tables]
+        )
     ]
     candidates.sort(
         key=lambda region: (region.bbox[2] - region.bbox[0]) * (region.bbox[3] - region.bbox[1]),
@@ -1307,10 +1390,19 @@ def _passage_groups(
         deduplicated.append(region)
 
     eligible = [
-        block
-        for block in blocks
-        if _eligible_editable_block(block, image_regions, table_regions, page_height)
+        block for block in blocks if _eligible_editable_block(block, image_regions, editable_tables)
     ]
+
+    def cuts_text(region: _ImageRegion) -> bool:
+        x0, y0, x1, y1 = region.bbox
+        for block in eligible:
+            bx0, by0, bx1, by1 = (float(value) for value in block.bbox.pixel)
+            inset = (by1 - by0) * 0.25
+            if bx0 < x1 and bx1 > x0 and any(by0 + inset < edge < by1 - inset for edge in (y0, y1)):
+                return True
+        return False
+
+    deduplicated = [region for region in deduplicated if not cuts_text(region)]
     assigned: set[str] = set()
     result: list[tuple[_ImageRegion, list[Any]]] = []
     for region in deduplicated:
