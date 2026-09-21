@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
 from lxml import etree  # type: ignore[import-untyped]
@@ -27,6 +27,11 @@ HV = "http://www.hancom.co.kr/hwpml/2011/version"
 HA = "http://www.hancom.co.kr/hwpml/2011/app"
 OPF = "http://www.idpf.org/2007/opf/"
 OCF = "urn:oasis:names:tc:opendocument:xmlns:container"
+MAX_ARCHIVE_ENTRIES = 10_000
+MAX_ENTRY_BYTES = 128 * 1024 * 1024
+MAX_PACKAGE_BYTES = 512 * 1024 * 1024
+MAX_COMPRESSED_PACKAGE_BYTES = 256 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 1_000
 
 
 @dataclass(frozen=True)
@@ -44,8 +49,19 @@ def validate_hwpx(path: Path) -> ValidationResult:
     warnings: list[str] = []
     if not zipfile.is_zipfile(path):
         return ValidationResult(["not a ZIP package"], warnings)
-    with zipfile.ZipFile(path) as archive:
-        broken_entry = archive.testzip()
+    try:
+        archive_context = zipfile.ZipFile(path)
+    except (OSError, zipfile.BadZipFile):
+        return ValidationResult(["not a readable ZIP package"], warnings)
+    with archive_context as archive:
+        errors.extend(_archive_safety_errors(archive))
+        if errors:
+            return ValidationResult(errors, warnings)
+        try:
+            broken_entry = archive.testzip()
+        except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+            errors.append(f"failed to verify ZIP entries: {exc}")
+            return ValidationResult(errors, warnings)
         if broken_entry is not None:
             errors.append(f"corrupt ZIP entry: {broken_entry}")
         names = set(archive.namelist())
@@ -61,8 +77,20 @@ def validate_hwpx(path: Path) -> ValidationResult:
         parsed: dict[str, etree._Element] = {}
         for name in sorted(name for name in names if name.endswith((".xml", ".hpf"))):
             try:
-                parsed[name] = etree.fromstring(archive.read(name))
-            except etree.XMLSyntaxError as exc:
+                payload = archive.read(name)
+                lowered = payload.lower()
+                if b"<!doctype" in lowered or b"<!entity" in lowered:
+                    errors.append(f"DTD or entity declaration is forbidden in {name}")
+                    continue
+                parser = etree.XMLParser(
+                    resolve_entities=False,
+                    no_network=True,
+                    load_dtd=False,
+                    recover=False,
+                    huge_tree=False,
+                )
+                parsed[name] = cast(etree._Element, etree.fromstring(payload, parser=parser))
+            except (OSError, RuntimeError, etree.XMLSyntaxError) as exc:
                 errors.append(f"malformed XML {name}: {exc}")
         content = parsed.get("Contents/content.hpf")
         if content is not None:
@@ -113,6 +141,45 @@ def validate_hwpx(path: Path) -> ValidationResult:
         if settings is not None:
             _require_root(settings, HA, "HWPApplicationSetting", "settings.xml", errors)
     return ValidationResult(errors, warnings)
+
+
+def _archive_safety_errors(archive: zipfile.ZipFile) -> list[str]:
+    infos = archive.infolist()
+    errors: list[str] = []
+    if len(infos) > MAX_ARCHIVE_ENTRIES:
+        errors.append("ZIP package contains too many entries")
+        return errors
+    names = [info.filename for info in infos]
+    if len(names) != len(set(names)) or len(names) != len({name.casefold() for name in names}):
+        errors.append("ZIP package contains duplicate entry names")
+    total = 0
+    compressed_total = 0
+    for info in infos:
+        member = PurePosixPath(info.filename)
+        if (
+            "\\" in info.filename
+            or member.is_absolute()
+            or ".." in member.parts
+            or any(":" in part for part in member.parts)
+        ):
+            errors.append(f"unsafe ZIP entry name: {info.filename}")
+            continue
+        if info.flag_bits & 0x1:
+            errors.append(f"encrypted ZIP entry is forbidden: {info.filename}")
+        if info.file_size > MAX_ENTRY_BYTES:
+            errors.append(f"ZIP entry exceeds size limit: {info.filename}")
+        total += info.file_size
+        compressed_total += info.compress_size
+        if info.compress_size == 0:
+            if info.file_size > 0:
+                errors.append(f"ZIP entry has invalid compressed size: {info.filename}")
+        elif info.file_size / info.compress_size > MAX_COMPRESSION_RATIO:
+            errors.append(f"ZIP entry exceeds compression-ratio limit: {info.filename}")
+    if total > MAX_PACKAGE_BYTES:
+        errors.append("ZIP package exceeds uncompressed size limit")
+    if compressed_total > MAX_COMPRESSED_PACKAGE_BYTES:
+        errors.append("ZIP package exceeds compressed size limit")
+    return errors
 
 
 def _require_root(
