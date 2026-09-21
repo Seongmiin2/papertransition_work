@@ -6,6 +6,13 @@
 papertransition_work/
 ├─ apps/                         Electron 데스크톱 앱
 ├─ src/scan2hwpx/                Python 제품 파이프라인
+│  ├─ contracts/                 EvidenceIR·ContentIR·HwpDocumentPlan 계약
+│  ├─ evaluation/                release gate·검수·grounding·handoff·검수 완료본 안전 컴파일 경계
+│  ├─ knowledge/                 공식 한컴 자료 RAG/eval 지식 경계
+│  ├─ hwpx/                      SHA 결속 PNG assets·결정론적 styled-text/table/image HWPX compiler·검증기
+│  ├─ model_a/                   provider-neutral 페이지 실행·추론 검증·document barrier·규칙 기반 대역
+│  ├─ model_b/                   provider-neutral 설계 단일 실행·요청·응답 검증 경계
+│  └─ blueprint/                 구조 분류·배치 결정 규칙 기반 대역 (Model A/B 자리)
 ├─ tests/                        단위·통합 테스트
 ├─ ai/
 │  ├─ datasets/
@@ -28,7 +35,7 @@ papertransition_work/
 ├─ output/                       실행·학습·벤치마크 생성물 (Git 제외)
 ├─ samples/                      재현용 입력 위치 안내
 ├─ templates/                    HWPX 템플릿
-└─ scripts/                      앱 실행·검증 보조 스크립트
+└─ scripts/                      앱 실행·실제 후보 검수 smoke 보조 스크립트
 ```
 
 ## 관리 원칙
