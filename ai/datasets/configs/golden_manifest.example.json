@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "example_only": true,
+  "documents": [
+    {
+      "id": "example-train-001",
+      "lineage_id": "example-source-train-001",
+      "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "template_family": "example-family-train",
+      "split": "train",
+      "capture": "synthetic",
+      "page_count": 6,
+      "annotation_artifact_ref": "artifact://golden-v1/annotations/example-train-001.json",
+      "annotation_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "verified": true,
+      "usage_rights_verified": true,
+      "verification_attestation": {
+        "reviewer_id": "reviewer-example-001",
+        "verified_at": "2026-09-09T09:00:00+09:00",
+        "verification_artifact_ref": "artifact://golden-v1/verifications/example-train-001.json",
+        "verification_artifact_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "id": "example-validation-001",
+      "lineage_id": "example-source-validation-001",
+      "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "template_family": "example-family-validation",
+      "split": "validation",
+      "capture": "born_digital",
+      "page_count": 4,
+      "annotation_artifact_ref": "artifact://golden-v1/annotations/example-validation-001.json",
+      "annotation_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "verified": true,
+      "usage_rights_verified": true,
+      "verification_attestation": {
+        "reviewer_id": "reviewer-example-002",
+        "verified_at": "2026-09-09T09:05:00+09:00",
+        "verification_artifact_ref": "artifact://golden-v1/verifications/example-validation-001.json",
+        "verification_artifact_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    },
+    {
+      "id": "example-test-001",
+      "lineage_id": "example-source-test-001",
+      "source_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "template_family": "example-family-test",
+      "split": "test",
+      "capture": "real_scan",
+      "page_count": 8,
+      "annotation_artifact_ref": "artifact://golden-v1/annotations/example-test-001.json",
+      "annotation_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "verified": true,
+      "usage_rights_verified": true,
+      "verification_attestation": {
+        "reviewer_id": "reviewer-example-003",
+        "verified_at": "2026-09-09T09:10:00+09:00",
+        "verification_artifact_ref": "artifact://golden-v1/verifications/example-test-001.json",
+        "verification_artifact_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    }
+  ]
+}

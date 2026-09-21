@@ -1,0 +1,48 @@
+{
+  "schema_version": "ocr-training-rights/1.0",
+  "example_only": true,
+  "documents": [
+    {
+      "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "split": "train",
+      "template_family": "replace-with-train-family",
+      "usage_scope": "ocr_model_training_and_evaluation",
+      "rights_verified": true,
+      "attestation": {
+        "attestor_id": "replace-with-verified-attestor",
+        "attested_at": "2000-01-01T00:00:00+00:00",
+        "basis": "licensed",
+        "evidence_artifact_ref": "artifact://replace-with-rights-evidence/train",
+        "evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "split": "validation",
+      "template_family": "replace-with-validation-family",
+      "usage_scope": "ocr_model_training_and_evaluation",
+      "rights_verified": true,
+      "attestation": {
+        "attestor_id": "replace-with-verified-attestor",
+        "attested_at": "2000-01-01T00:00:00+00:00",
+        "basis": "licensed",
+        "evidence_artifact_ref": "artifact://replace-with-rights-evidence/validation",
+        "evidence_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "split": "test",
+      "template_family": "replace-with-test-family",
+      "usage_scope": "ocr_model_training_and_evaluation",
+      "rights_verified": true,
+      "attestation": {
+        "attestor_id": "replace-with-verified-attestor",
+        "attested_at": "2000-01-01T00:00:00+00:00",
+        "basis": "licensed",
+        "evidence_artifact_ref": "artifact://replace-with-rights-evidence/test",
+        "evidence_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    }
+  ]
+}
