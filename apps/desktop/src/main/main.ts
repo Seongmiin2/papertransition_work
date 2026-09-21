@@ -247,7 +247,7 @@ async function processQueue(): Promise<void> {
       return;
     }
     workerStderr = "";
-    child.stdin.write(JSON.stringify({ protocol_version: "1.0", request_id: id, method: "convert", params: { job_id: id, input_pdf: staged, work_dir: root, options: { mode: "fast", dpi: 120, device: "auto", renderer: "editable", write_diagnostics: false, recognition_model_dir: existsSync(join(recognitionModel, "inference.yml")) ? recognitionModel : null, page_anomaly_model: existsSync(pageAnomalyModel) ? pageAnomalyModel : null } } }) + "\n");
+    child.stdin.write(JSON.stringify({ protocol_version: "1.0", request_id: id, method: "convert", params: { job_id: id, input_pdf: staged, work_dir: root, options: { mode: "fast", dpi: 120, device: "auto", renderer: "editable", write_diagnostics: false, verify_hancom: true, recognition_model_dir: existsSync(join(recognitionModel, "inference.yml")) ? recognitionModel : null, page_anomaly_model: existsSync(pageAnomalyModel) ? pageAnomalyModel : null } } }) + "\n");
   } catch (error) {
     if (activeJobId === id) activeJobId = null;
     rmSync(inputDir, { recursive: true, force: true });

@@ -13,7 +13,11 @@ from scan2hwpx.hwpx import (
     render_semantic_hwpx,
     validate_hwpx,
 )
-from scan2hwpx.hwpx.hancom import render_clean_with_hancom
+from scan2hwpx.hwpx.hancom import (
+    HancomRoundTripError,
+    render_clean_with_hancom,
+    verify_hancom_roundtrip,
+)
 from scan2hwpx.images import write_image
 from scan2hwpx.ir.models import Document
 from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
@@ -37,6 +41,7 @@ def convert_pdf(
     ocr_provider: PaddlePdfOcrProvider | None = None,
     renderer: str = "fidelity",
     write_diagnostics: bool = True,
+    verify_hancom: bool = False,
 ) -> dict[str, object]:
     """OCR a PDF and render it to HWPX in one call.
 
@@ -61,6 +66,7 @@ def convert_pdf(
         renderer=renderer,
         progress=progress,
         input_name=input_path.name,
+        verify_hancom=verify_hancom,
     )
 
 
@@ -148,6 +154,7 @@ def run_render_stage(
     renderer: str = "fidelity",
     progress: Callable[[str], None] | None = None,
     input_name: str = "",
+    verify_hancom: bool = False,
 ) -> dict[str, object]:
     """Render, validate, and atomically write the HWPX file for an OCR'd Document.
 
@@ -238,6 +245,19 @@ def run_render_stage(
                     "Fallback HWPX validation failed: " + "; ".join(result.errors)
                 ) from exc
             text_length = clean_text_length
+
+    if verify_hancom:
+        if progress is not None:
+            progress(f"{input_name} - verifying in Hancom")
+        # Reflowing renderers legitimately change the page count.
+        expected_pages = (
+            len(document.pages) if renderer in {"fidelity", "semantic", "editable"} else None
+        )
+        try:
+            reopened = verify_hancom_roundtrip(candidate, expected_pages)
+        except HancomRoundTripError:
+            candidate.unlink(missing_ok=True)
+            raise
 
     candidate.replace(output_path)
     logger.info(

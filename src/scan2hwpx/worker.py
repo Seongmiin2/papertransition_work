@@ -83,6 +83,7 @@ def handle(request: dict[str, Any]) -> None:
     device = str(options.get("device", "auto"))
     renderer = str(options.get("renderer", "fidelity"))
     write_diagnostics = bool(options.get("write_diagnostics", True))
+    verify_hancom = bool(options.get("verify_hancom", False))
     recognition_value = options.get("recognition_model_dir")
     recognition_model_dir = Path(str(recognition_value)).resolve() if recognition_value else None
     anomaly_value = options.get("page_anomaly_model")
@@ -108,6 +109,7 @@ def handle(request: dict[str, Any]) -> None:
                 ocr_provider=provider,
                 renderer=renderer,
                 write_diagnostics=write_diagnostics,
+                verify_hancom=verify_hancom,
             )
         finally:
             if not write_diagnostics:
