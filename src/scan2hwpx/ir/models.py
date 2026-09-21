@@ -26,7 +26,16 @@ class BlockKind(StrEnum):
     FOOTER = "footer"
     URL_FOOTNOTE = "url_footnote"
     PAGE_NUMBER = "page_number"
+    SOURCE = "source"
     UNKNOWN = "unknown"
+
+
+class RegionPlacement(StrEnum):
+    PASSAGE_BOX = "passage_box"
+    FLOW_TEXT = "flow_text"
+    TABLE = "table"
+    IMAGE = "image"
+    DISCARD = "discard"
 
 
 class FormulaFormat(StrEnum):
@@ -77,6 +86,15 @@ class Block(StrictModel):
     source_provider: str
     source_payload_ref: str
     annotation_state: AnnotationState = AnnotationState.PRINTED
+    # Structural role assigned after OCR (by the rule-based stand-in today, a
+    # trained "Model A" later). Distinct from `kind`, which is the OCR-time
+    # first-pass guess and stays untouched so existing readers of `kind` are
+    # unaffected.
+    role: BlockKind | None = None
+    role_confidence: float | None = Field(default=None, ge=0, le=1)
+    role_source: str | None = None
+    group_id: str | None = None
+    region_id: str | None = None
 
 
 class Column(StrictModel):
@@ -107,6 +125,34 @@ class Formula(StrictModel):
     validation: FormulaValidation = Field(default_factory=FormulaValidation)
 
 
+class TableCellSpan(StrictModel):
+    row: int = Field(ge=0)
+    column: int = Field(ge=0)
+    col_span: int = Field(ge=1, default=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class LayoutRegion(StrictModel):
+    """A candidate table/image/passage-box region, and its placement decision.
+
+    Populated by the rule-based stand-in for "Model B" (later, a trained
+    model) from the ML+CV layout seed. Consumers such as hwpx/semantic.py
+    prefer this over re-parsing layout_seed.json when it is present.
+    """
+
+    id: str
+    label: str
+    bbox: BBox
+    confidence: float = Field(ge=0, le=1)
+    source: str
+    source_label: str
+    confirmed: bool = False
+    placement: RegionPlacement | None = None
+    placement_confidence: float | None = Field(default=None, ge=0, le=1)
+    placement_source: str | None = None
+    cell_spans: list[TableCellSpan] = Field(default_factory=list)
+
+
 class Page(StrictModel):
     page_no: int = Field(ge=1)
     width: float = Field(gt=0)
@@ -116,6 +162,9 @@ class Page(StrictModel):
     blocks: list[Block]
     formulas: list[Formula] = Field(default_factory=list)
     quality: PageQuality
+    column_confidence: float = Field(default=1.0, ge=0, le=1)
+    column_source: str = "cv_gutter_detection"
+    regions: list[LayoutRegion] = Field(default_factory=list)
 
 
 class Choice(StrictModel):
@@ -157,7 +206,7 @@ class QAReport(StrictModel):
 
 
 class Document(StrictModel):
-    schema_version: str = "0.2.0"
+    schema_version: str = "0.3.0"
     id: str
     source_hash: str
     page_size: tuple[float, float]

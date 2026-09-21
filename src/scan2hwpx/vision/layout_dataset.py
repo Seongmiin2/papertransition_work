@@ -223,7 +223,12 @@ def detect_table_grids(path: Path) -> list[TableGrid]:
     """Return complete ruled grids; merged-cell topology still requires human verification."""
     with Image.open(path) as source:
         rgb = np.asarray(ImageOps.exif_transpose(source).convert("RGB"))
-    horizontal, vertical = _ruled_masks(rgb)
+    return detect_table_grids_array(rgb)
+
+
+def detect_table_grids_array(rgb: np.ndarray[Any, Any]) -> list[TableGrid]:
+    """Return ruled grids from an in-memory RGB page."""
+    horizontal, vertical = ruled_line_masks_array(rgb)
     height, width = horizontal.shape
     ruled = cv2.morphologyEx(
         cv2.bitwise_or(horizontal, vertical),
@@ -264,6 +269,13 @@ def detect_table_grids(path: Path) -> list[TableGrid]:
             )
         )
     return grids
+
+
+def ruled_line_masks_array(
+    rgb: np.ndarray[Any, Any], *, already_preprocessed: bool = False
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """Return horizontal and vertical ruled-line masks for an in-memory RGB page."""
+    return _ruled_masks(rgb, already_preprocessed=already_preprocessed)
 
 
 def _ruled_masks(

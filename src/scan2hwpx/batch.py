@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from pathlib import Path
 from typing import Any
 
+from scan2hwpx.ir.models import Document
 from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
-from scan2hwpx.pipeline import convert_pdf
+from scan2hwpx.pipeline import convert_pdf, run_ocr_stage, run_render_stage
 
 BatchProgress = Callable[[str], None]
 MAX_BATCH_FILES = 10
+STAGE2_MAX_WORKERS = 4
 _WORKER_PROVIDER: PaddlePdfOcrProvider | None = None
 
 
@@ -60,7 +63,7 @@ def convert_directory(
         if lexicon_path and lexicon_path.is_file()
         else None,
     }
-    workers = 2 if provider.device.startswith("gpu") and len(pdf_files) > 1 else 1
+    stage1_workers = 2 if provider.device.startswith("gpu") and len(pdf_files) > 1 else 1
     started = time.perf_counter()
     results_by_index: dict[int, dict[str, Any]] = {}
     pending: list[tuple[int, Path, str, Path, Path]] = []
@@ -83,51 +86,44 @@ def convert_directory(
                 continue
         pending.append((index, source, source_hash, output_path, result_path))
 
-    if workers == 2 and pending:
+    stage2_workers = 0
+    if len(pending) > 1:
+        stage2_workers = max(1, min(os.cpu_count() or 1, len(pending), STAGE2_MAX_WORKERS))
         for index, source, _source_hash, _output_path, _result_path in pending:
             if progress:
                 progress(f"[{index}/{len(pdf_files)}] 변환 시작: {source.name}")
-        with ProcessPoolExecutor(
-            max_workers=workers,
-            initializer=_init_worker,
-            initargs=(
-                dpi,
+
+        def handle_result(index: int, source: Path, result_path: Path, item: dict[str, Any]) -> None:
+            _write_json(result_path, item)
+            results_by_index[index] = item
+            if progress:
+                progress(f"[{index}/{len(pdf_files)}] {item['status']}: {source.name}")
+            _write_report(
+                output_dir,
+                [results_by_index[key] for key in sorted(results_by_index)],
+                started,
+                len(pdf_files),
                 fusion_mode,
-                lexicon_path,
+                dpi,
                 provider.device,
-                recognition_model_dir,
-                page_anomaly_model,
-            ),
-        ) as executor:
-            futures = {
-                executor.submit(
-                    _convert_one,
-                    source,
-                    source_hash,
-                    output_path,
-                    settings,
-                    dpi,
-                    renderer,
-                ): (index, source, result_path)
-                for index, source, source_hash, output_path, result_path in pending
-            }
-            for future in as_completed(futures):
-                index, source, result_path = futures[future]
-                item = future.result()
-                _write_json(result_path, item)
-                results_by_index[index] = item
-                if progress:
-                    progress(f"[{index}/{len(pdf_files)}] {item['status']}: {source.name}")
-                _write_report(
-                    output_dir,
-                    [results_by_index[key] for key in sorted(results_by_index)],
-                    started,
-                    len(pdf_files),
-                    fusion_mode,
-                    dpi,
-                    provider.device,
-                    workers,
-                )
+                stage1_workers,
+                stage2_workers,
+            )
+
+        _run_pipelined(
+            pending,
+            dpi=dpi,
+            fusion_mode=fusion_mode,
+            lexicon_path=lexicon_path,
+            device=provider.device,
+            recognition_model_dir=recognition_model_dir,
+            page_anomaly_model=page_anomaly_model,
+            renderer=renderer,
+            settings=settings,
+            stage1_workers=stage1_workers,
+            stage2_workers=stage2_workers,
+            on_result=handle_result,
+        )
     else:
         for index, source, source_hash, output_path, result_path in pending:
             if progress:
@@ -152,7 +148,8 @@ def convert_directory(
                 fusion_mode,
                 dpi,
                 provider.device,
-                workers,
+                stage1_workers,
+                stage2_workers,
             )
 
     results = [results_by_index[key] for key in sorted(results_by_index)]
@@ -164,11 +161,104 @@ def convert_directory(
         fusion_mode,
         dpi,
         provider.device,
-        workers,
+        stage1_workers,
+        stage2_workers,
     )
 
 
-def _init_worker(
+def _run_pipelined(
+    pending: list[tuple[int, Path, str, Path, Path]],
+    *,
+    dpi: int,
+    fusion_mode: str,
+    lexicon_path: Path | None,
+    device: str,
+    recognition_model_dir: Path | None,
+    page_anomaly_model: Path | None,
+    renderer: str,
+    settings: dict[str, Any],
+    stage1_workers: int,
+    stage2_workers: int,
+    on_result: Callable[[int, Path, Path, dict[str, Any]], None],
+) -> None:
+    """Overlap GPU-bound OCR (stage 1) with CPU-bound rendering (stage 2).
+
+    Each stage gets its own worker pool, sized for what that stage actually
+    needs (stage1_workers stays GPU-gated exactly as before; stage2_workers
+    scales with CPU cores since rendering/validation touch no GPU state). As
+    soon as one document finishes OCR, its rendering is submitted to stage 2
+    immediately rather than waiting for the whole batch's OCR to finish, so
+    rendering document N overlaps with OCR for document N + 1.
+    """
+    with (
+        ProcessPoolExecutor(
+            max_workers=stage1_workers,
+            initializer=_init_stage1_worker,
+            initargs=(
+                dpi,
+                fusion_mode,
+                lexicon_path,
+                device,
+                recognition_model_dir,
+                page_anomaly_model,
+            ),
+        ) as stage1_pool,
+        ProcessPoolExecutor(max_workers=stage2_workers) as stage2_pool,
+    ):
+        stage1_futures: dict[Future[dict[str, Any]], tuple[int, Path, Path, Path]] = {
+            stage1_pool.submit(_run_ocr_stage_job, source, output_path.parent, dpi, renderer): (
+                index,
+                source,
+                output_path,
+                result_path,
+            )
+            for index, source, _source_hash, output_path, result_path in pending
+        }
+        source_hashes = {index: source_hash for index, _s, source_hash, _o, _r in pending}
+        stage2_futures: dict[Future[dict[str, Any]], tuple[int, Path, Path]] = {}
+
+        remaining: set[Future[dict[str, Any]]] = set(stage1_futures)
+        while remaining:
+            done, remaining = wait(remaining, return_when=FIRST_COMPLETED)
+            for future in done:
+                if future in stage1_futures:
+                    index, source, output_path, result_path = stage1_futures.pop(future)
+                    ocr_result = future.result()
+                    if ocr_result["status"] != "ok":
+                        on_result(
+                            index,
+                            source,
+                            result_path,
+                            {
+                                "status": "failed",
+                                "source": str(source),
+                                "source_hash": source_hashes[index],
+                                "output": str(output_path.resolve()),
+                                "settings": settings,
+                                "seconds": ocr_result["seconds"],
+                                "error_type": ocr_result["error_type"],
+                                "error": ocr_result["error"],
+                            },
+                        )
+                        continue
+                    stage2_future = stage2_pool.submit(
+                        _run_render_stage_job,
+                        output_path.parent,
+                        output_path,
+                        renderer,
+                        str(source),
+                        source_hashes[index],
+                        settings,
+                        float(ocr_result["seconds"]),
+                    )
+                    stage2_futures[stage2_future] = (index, source, result_path)
+                    remaining.add(stage2_future)
+                else:
+                    index, source, result_path = stage2_futures.pop(future)
+                    on_result(index, source, result_path, future.result())
+
+
+def _init_stage1_worker(
     dpi: int,
     fusion_mode: str,
     lexicon_path: Path | None,
@@ -185,6 +275,66 @@ def _init_worker(
         recognition_model_dir=recognition_model_dir,
         page_anomaly_model=page_anomaly_model,
     )
+
+
+def _run_ocr_stage_job(source: Path, job_dir: Path, dpi: int, renderer: str) -> dict[str, Any]:
+    if _WORKER_PROVIDER is None:
+        raise RuntimeError("batch OCR worker was not initialized")
+    started = time.perf_counter()
+    try:
+        run_ocr_stage(
+            source,
+            job_dir,
+            dpi=dpi,
+            ocr_provider=_WORKER_PROVIDER,
+            renderer=renderer,
+            write_diagnostics=False,
+        )
+        return {"status": "ok", "seconds": round(time.perf_counter() - started, 3)}
+    except Exception as exc:  # noqa: BLE001 - batch must continue with remaining customer files
+        return {
+            "status": "failed",
+            "seconds": round(time.perf_counter() - started, 3),
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+
+
+def _run_render_stage_job(
+    job_dir: Path,
+    output_path: Path,
+    renderer: str,
+    source: str,
+    source_hash: str,
+    settings: dict[str, Any],
+    ocr_seconds: float,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        document = Document.model_validate_json(
+            (job_dir / "document_ir.json").read_text(encoding="utf-8")
+        )
+        summary = run_render_stage(document, job_dir, output_path, renderer=renderer)
+        return {
+            "status": "completed",
+            "source": source,
+            "source_hash": source_hash,
+            "output": str(output_path.resolve()),
+            "settings": settings,
+            "seconds": round(ocr_seconds + time.perf_counter() - started, 3),
+            **summary,
+        }
+    except Exception as exc:  # noqa: BLE001 - batch must continue with remaining customer files
+        return {
+            "status": "failed",
+            "source": source,
+            "source_hash": source_hash,
+            "output": str(output_path.resolve()),
+            "settings": settings,
+            "seconds": round(ocr_seconds + time.perf_counter() - started, 3),
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
 
 
 def _convert_one(
@@ -242,7 +392,8 @@ def _write_report(
     fusion_mode: str,
     dpi: int,
     device: str,
-    workers: int,
+    stage1_workers: int,
+    stage2_workers: int = 0,
 ) -> dict[str, Any]:
     elapsed = time.perf_counter() - started
     finished = [item for item in results if item["status"] in {"completed", "skipped"}]
@@ -252,7 +403,8 @@ def _write_report(
         "mode": fusion_mode,
         "dpi": dpi,
         "device": device,
-        "workers": workers,
+        "workers": stage1_workers,
+        "stage2_workers": stage2_workers,
         "summary": {
             "total_files": total,
             "processed": len(results),

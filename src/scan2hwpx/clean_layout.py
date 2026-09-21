@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
+from scan2hwpx.blueprint import model_a
 from scan2hwpx.ir.models import AnnotationState, Block, BlockKind, Document
 
 
@@ -41,12 +42,7 @@ DROP_PATTERNS = [
         r"^(선다형|1번~25번)$",
     )
 ]
-QUESTION_RE = re.compile(r"^\s*\d{1,2}\.\s*")
-CHOICE_RE = re.compile(r"^\s*[①②③④⑤]\s*")
 NUMBER_CHOICE_RE = re.compile(r"^\s*([1-5])\s*$")
-RANGE_RE = re.compile(r"^\s*\[?\d+\s*[~～-]\s*\d+\]?\s*")
-PASSAGE_HEAD_RE = re.compile(r"^\s*\([가-힣A-Z]\)\s*")
-SOURCE_RE = re.compile(r"^\s*[-―].*[-―]\s*$")
 CIRCLED = {"1": "①", "2": "②", "3": "③", "4": "④", "5": "⑤"}
 
 
@@ -118,15 +114,17 @@ def _column(block: Block) -> int:
 
 
 def _kind(text: str, original: BlockKind, question_started: bool) -> CleanKind:
-    if QUESTION_RE.match(text) or original == BlockKind.QUESTION:
+    if model_a.match_question_number(text) is not None or original == BlockKind.QUESTION:
         return CleanKind.QUESTION
-    if question_started and (CHOICE_RE.match(text) or original == BlockKind.CHOICE):
+    if question_started and (
+        model_a.match_choice(text) is not None or original == BlockKind.CHOICE
+    ):
         return CleanKind.CHOICE
-    if RANGE_RE.match(text):
+    if model_a.RANGE_RE.match(text):
         return CleanKind.INSTRUCTION
-    if SOURCE_RE.match(text):
+    if model_a.SOURCE_RE.match(text):
         return CleanKind.SOURCE
-    if PASSAGE_HEAD_RE.match(text):
+    if model_a.PASSAGE_HEAD_RE.match(text):
         return CleanKind.PASSAGE
     return CleanKind.PASSAGE
 

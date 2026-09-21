@@ -5,7 +5,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from scan2hwpx.clean_layout import build_clean_items
+from scan2hwpx.blueprint import model_b
+from scan2hwpx.clean_layout import CleanItem, build_clean_items
 from scan2hwpx.hwpx import (
     render_clean_hwpx,
     render_fidelity_hwpx,
@@ -24,6 +25,8 @@ from scan2hwpx.vision.formulas import FormulaProcessor
 from scan2hwpx.vision.layout_dataset import build_layout_seed_dataset
 from scan2hwpx.vision.pdf import extract_formulas as _extract_formulas
 
+RENDERERS = {"fidelity", "semantic", "editable", "portable", "hancom"}
+
 
 def convert_pdf(
     input_path: Path,
@@ -35,20 +38,54 @@ def convert_pdf(
     renderer: str = "fidelity",
     write_diagnostics: bool = True,
 ) -> dict[str, object]:
-    if renderer not in {"fidelity", "semantic", "editable", "portable", "hancom"}:
+    """OCR a PDF and render it to HWPX in one call.
+
+    A thin wrapper over run_ocr_stage() + run_render_stage(); batch.py calls
+    those directly so GPU-bound OCR and CPU-bound rendering can run in
+    independently sized worker pools instead of one process doing both.
+    """
+    document = run_ocr_stage(
+        input_path,
+        output_path.parent,
+        dpi=dpi,
+        progress=progress,
+        formula_processor=formula_processor,
+        ocr_provider=ocr_provider,
+        renderer=renderer,
+        write_diagnostics=write_diagnostics,
+    )
+    return run_render_stage(
+        document,
+        output_path.parent,
+        output_path,
+        renderer=renderer,
+        progress=progress,
+        input_name=input_path.name,
+    )
+
+
+def run_ocr_stage(
+    input_path: Path,
+    output_dir: Path,
+    *,
+    dpi: int = 240,
+    progress: Callable[[str], None] | None = None,
+    formula_processor: FormulaProcessor | None = None,
+    ocr_provider: PaddlePdfOcrProvider | None = None,
+    renderer: str = "fidelity",
+    write_diagnostics: bool = True,
+) -> Document:
+    """Run OCR, layout analysis, and blueprint region placement.
+
+    GPU-bound. Writes document_ir.json (and, for the semantic/editable
+    renderers, layout_training/layout_seed.json plus debug page images) to
+    output_dir, so run_render_stage() can pick the job back up from disk in a
+    separate process.
+    """
+    if renderer not in RENDERERS:
         raise ValueError("renderer must be fidelity, semantic, editable, portable, or hancom")
-    output_dir = output_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
-    log_path = output_dir / "run.log"
-    logger = logging.getLogger(f"scan2hwpx.pipeline.{output_path.resolve()}")
-    for previous_handler in logger.handlers:
-        previous_handler.close()
-    logger.handlers.clear()
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-    handler = logging.FileHandler(log_path, encoding="utf-8", mode="w")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    logger.addHandler(handler)
+    logger = _configure_logger(output_dir, mode="w")
     logger.info("start input=%s dpi=%s", input_path, dpi)
 
     def report(page: int, total: int, stage: str) -> None:
@@ -77,18 +114,62 @@ def convert_pdf(
     blocks = [block for page in document.pages for block in page.blocks]
     if not blocks or not any(block.text.strip() for block in blocks):
         raise RuntimeError("OCR did not return any readable text. Check the PDF image quality.")
-    clean_items = build_clean_items(document) if renderer in {"portable", "hancom"} else []
-    if renderer in {"portable", "hancom"} and not clean_items:
-        raise RuntimeError("OCR text was found, but no printable document items could be built.")
-    clean_text_length = sum(len(item.text) for item in clean_items)
+
+    if renderer in {"semantic", "editable"}:
+        if progress is not None:
+            progress(f"{input_path.name} - detecting tables, boxes, and pictures")
+        page_images = [
+            output_dir / "debug" / "original" / f"page-{page.page_no}.png"
+            for page in document.pages
+        ]
+        layout_dir = output_dir / "layout_training"
+        build_layout_seed_dataset(
+            input_path,
+            layout_dir,
+            device=provider.device,
+            dpi=min(dpi, 200),
+            page_images=page_images,
+        )
+        model_b.assign_region_placements(document, layout_dir / "layout_seed.json")
 
     ir_path = output_dir / "document_ir.json"
     ir_path.write_text(document.model_dump_json(indent=2), encoding="utf-8")
     if write_diagnostics:
         write_review(document, output_dir)
+    logger.info("ocr stage done pages=%s questions=%s", len(document.pages), len(document.questions))
+    return document
+
+
+def run_render_stage(
+    document: Document,
+    output_dir: Path,
+    output_path: Path,
+    *,
+    renderer: str = "fidelity",
+    progress: Callable[[str], None] | None = None,
+    input_name: str = "",
+) -> dict[str, object]:
+    """Render, validate, and atomically write the HWPX file for an OCR'd Document.
+
+    Pure CPU: no GPU/OCR calls. Pairs with run_ocr_stage(); when Document was
+    produced by a separate process, pass Document.model_validate_json(...) of
+    that stage's document_ir.json.
+    """
+    if renderer not in RENDERERS:
+        raise ValueError("renderer must be fidelity, semantic, editable, portable, or hancom")
+    input_name = input_name or output_path.name
+    logger = _configure_logger(output_dir, mode="a")
+
+    blocks = [block for page in document.pages for block in page.blocks]
+    clean_items: list[CleanItem] = (
+        build_clean_items(document) if renderer in {"portable", "hancom"} else []
+    )
+    if renderer in {"portable", "hancom"} and not clean_items:
+        raise RuntimeError("OCR text was found, but no printable document items could be built.")
+    clean_text_length = sum(len(item.text) for item in clean_items)
 
     if progress is not None:
-        progress(f"{input_path.name} - writing editable HWPX")
+        progress(f"{input_name} - writing editable HWPX")
 
     candidate = output_path.with_name(f".{output_path.stem}.candidate{output_path.suffix}")
     candidate.unlink(missing_ok=True)
@@ -103,16 +184,7 @@ def convert_pdf(
         output_dir / "debug" / "original" / f"page-{page.page_no}.png" for page in document.pages
     ]
     if renderer in {"semantic", "editable"}:
-        if progress is not None:
-            progress(f"{input_path.name} - detecting tables, boxes, and pictures")
         layout_dir = output_dir / "layout_training"
-        build_layout_seed_dataset(
-            input_path,
-            layout_dir,
-            device=provider.device,
-            dpi=min(dpi, 200),
-            page_images=page_images,
-        )
         semantic_stats = render_semantic_hwpx(
             page_images,
             document,
@@ -158,7 +230,7 @@ def convert_pdf(
             candidate.unlink(missing_ok=True)
             render_engine = "hancom-template-hwpx"
             if progress is not None:
-                progress(f"{input_path.name} - Hancom automation failed; writing fallback HWPX")
+                progress(f"{input_name} - Hancom automation failed; writing fallback HWPX")
             render_clean_hwpx(document, candidate)
             result = validate_hwpx(candidate)
             if not result.valid:
@@ -192,6 +264,20 @@ def convert_pdf(
         "visual_fidelity": renderer in {"fidelity", "semantic", "editable"},
         "editable_layout": renderer != "fidelity",
     }
+
+
+def _configure_logger(output_dir: Path, *, mode: str) -> logging.Logger:
+    log_path = output_dir / "run.log"
+    logger = logging.getLogger(f"scan2hwpx.pipeline.{output_dir.resolve()}")
+    for previous_handler in logger.handlers:
+        previous_handler.close()
+    logger.handlers.clear()
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    handler = logging.FileHandler(log_path, encoding="utf-8", mode=mode)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    return logger
 
 
 def inspect_pdf(path: Path) -> dict[str, object]:

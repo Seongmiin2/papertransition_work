@@ -17,7 +17,7 @@ import numpy as np
 from lxml import etree  # type: ignore[import-untyped]
 from PIL import Image, ImageDraw
 
-from scan2hwpx.ir.models import Document
+from scan2hwpx.ir.models import Document, RegionPlacement
 from scan2hwpx.preprocess import preprocess_for_ocr
 from scan2hwpx.vision.layout_dataset import TableGrid, detect_table_grids
 
@@ -106,17 +106,23 @@ def render_semantic_hwpx(
     ):
         with Image.open(page_path) as opened:
             page_width, page_height = opened.size
-        image_regions = _image_regions(layout_page)
+        image_source = _ir_regions(ir_page, RegionPlacement.IMAGE, page_width, page_height)
+        if image_source is None:
+            image_source = _image_regions(layout_page)
         scaled_images = [
-            _scale_region(item, float(page_width), float(page_height)) for item in image_regions
+            _scale_region(item, float(page_width), float(page_height)) for item in image_source
         ]
+        table_source = _ir_regions(ir_page, RegionPlacement.TABLE, page_width, page_height)
+        if table_source is None:
+            table_source = _table_regions(layout_page)
         table_regions = [
-            _scale_region(item, float(page_width), float(page_height))
-            for item in _table_regions(layout_page)
+            _scale_region(item, float(page_width), float(page_height)) for item in table_source
         ]
+        passage_source = _ir_regions(ir_page, RegionPlacement.PASSAGE_BOX, page_width, page_height)
+        if passage_source is None:
+            passage_source = _passage_regions(layout_page)
         passage_regions = [
-            _scale_region(item, float(page_width), float(page_height))
-            for item in _passage_regions(layout_page)
+            _scale_region(item, float(page_width), float(page_height)) for item in passage_source
         ]
         grids = [
             _align_grid_to_seed(grid, table_regions)
@@ -393,13 +399,17 @@ def _build_editable_backgrounds(
             source_rgb = np.asarray(opened.convert("RGB"), dtype=np.uint8)
         image = Image.fromarray(preprocess_for_ocr(source_rgb).image)
         page_width, page_height = image.size
+        image_source = _ir_regions(ir_page, RegionPlacement.IMAGE, page_width, page_height)
+        if image_source is None:
+            image_source = _image_regions(layout_page)
         image_regions = [
-            _scale_region(item, float(page_width), float(page_height))
-            for item in _image_regions(layout_page)
+            _scale_region(item, float(page_width), float(page_height)) for item in image_source
         ]
+        table_source = _ir_regions(ir_page, RegionPlacement.TABLE, page_width, page_height)
+        if table_source is None:
+            table_source = _table_regions(layout_page)
         table_regions = [
-            _scale_region(item, float(page_width), float(page_height))
-            for item in _table_regions(layout_page)
+            _scale_region(item, float(page_width), float(page_height)) for item in table_source
         ]
         array = np.asarray(image, dtype=np.uint8)
         draw = ImageDraw.Draw(image)
@@ -637,9 +647,15 @@ def _build_passage_outline(
         blocks,
         key=lambda block: (float(block.bbox.pixel[1]), float(block.bbox.pixel[0])),
     )
+    anchor_pixel = ordered[0].bbox.pixel
     rectangle = _build_text_box(
         [ordered[0]],
-        tuple(float(value) for value in ordered[0].bbox.pixel),
+        (
+            float(anchor_pixel[0]),
+            float(anchor_pixel[1]),
+            float(anchor_pixel[2]),
+            float(anchor_pixel[3]),
+        ),
         page_width,
         page_height,
         ocr_text_styles=ocr_text_styles,
@@ -1074,6 +1090,34 @@ def _write_cell_paragraphs(
         if block is not None:
             text = etree.SubElement(run, f"{{{HP}}}t")
             text.text = str(block.text).strip()
+
+
+def _ir_regions(
+    ir_page: Any, placement: RegionPlacement, width: float, height: float
+) -> list[_ImageRegion] | None:
+    """Blueprint-classified regions for one page, scaled to (width, height).
+
+    Returns None when the page carries no blueprint regions (legacy IR, or
+    the rule-based Model B stand-in was not run), so callers fall back to
+    parsing layout_seed.json directly, unchanged from before this existed.
+    """
+    regions = getattr(ir_page, "regions", None)
+    if not regions:
+        return None
+    return [
+        _ImageRegion(
+            bbox=(
+                region.bbox.normalized[0] * width,
+                region.bbox.normalized[1] * height,
+                region.bbox.normalized[2] * width,
+                region.bbox.normalized[3] * height,
+            ),
+            source_width=width,
+            source_height=height,
+        )
+        for region in regions
+        if region.placement == placement
+    ]
 
 
 def _image_regions(page: dict[str, Any]) -> list[_ImageRegion]:

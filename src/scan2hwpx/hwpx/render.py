@@ -18,12 +18,21 @@ HH = "http://www.hancom.co.kr/hwpml/2011/head"
 XML = "http://www.w3.org/XML/1998/namespace"
 MIMETYPE = b"application/hwp+zip"
 _CANONICAL_TEMPLATE = Path(__file__).with_name("canonical_template.b64")
+_HWP_SPECIAL_TEXT_ELEMENTS = {
+    "\t": "tab",
+    "\n": "lineBreak",
+    "\u00a0": "nbSpace",
+    "\u3000": "fwSpace",
+}
 
 
 @dataclass(frozen=True)
 class RenderParagraph:
     text: str
     page_break: bool = False
+    char_pr_id: int = 3
+    para_pr_id: int = 20
+    style_id: int = 0
 
 
 def _serialize(root: etree._Element) -> bytes:
@@ -87,14 +96,14 @@ def _section_xml(paragraphs: list[RenderParagraph], template: bytes) -> bytes:
     layout.attrib.update(
         {
             "id": "1",
-            "paraPrIDRef": "20",
-            "styleIDRef": "0",
+            "paraPrIDRef": str(first.para_pr_id),
+            "styleIDRef": str(first.style_id),
             "pageBreak": "1" if first.page_break else "0",
             "columnBreak": "0",
             "merged": "0",
         }
     )
-    _append_text_run(layout, first.text)
+    _append_text_run(layout, first.text, first.char_pr_id)
     section.append(layout)
 
     for index, paragraph in enumerate(paragraphs[1:], start=2):
@@ -102,30 +111,65 @@ def _section_xml(paragraphs: list[RenderParagraph], template: bytes) -> bytes:
             section,
             f"{{{HP}}}p",
             id=str(index),
-            paraPrIDRef="20",
-            styleIDRef="0",
+            paraPrIDRef=str(paragraph.para_pr_id),
+            styleIDRef=str(paragraph.style_id),
             pageBreak="1" if paragraph.page_break else "0",
             columnBreak="0",
             merged="0",
         )
-        _append_text_run(node, paragraph.text)
+        _append_text_run(node, paragraph.text, paragraph.char_pr_id)
     return _serialize(section)
 
 
-def _append_text_run(paragraph: etree._Element, text: str) -> None:
-    run = etree.SubElement(paragraph, f"{{{HP}}}run", charPrIDRef="3")
+def _append_text_run(paragraph: etree._Element, text: str, char_pr_id: int) -> None:
+    run = etree.SubElement(paragraph, f"{{{HP}}}run", charPrIDRef=str(char_pr_id))
     if not text:
         return
     node = etree.SubElement(run, f"{{{HP}}}t")
     node.set(f"{{{XML}}}space", "preserve")
-    node.text = _xml_safe_text(text)
+    safe_text = _xml_safe_text(text)
+    previous_special: etree._Element | None = None
+    literal: list[str] = []
+    for character in safe_text:
+        local_name = _HWP_SPECIAL_TEXT_ELEMENTS.get(character)
+        if local_name is None:
+            literal.append(character)
+            continue
+        _set_mixed_text_literal(node, previous_special, "".join(literal))
+        literal.clear()
+        previous_special = etree.SubElement(node, f"{{{HP}}}{local_name}")
+    _set_mixed_text_literal(node, previous_special, "".join(literal))
+
+
+def _set_mixed_text_literal(
+    text_node: etree._Element,
+    previous_special: etree._Element | None,
+    value: str,
+) -> None:
+    if not value:
+        return
+    if previous_special is None:
+        text_node.text = value
+    else:
+        previous_special.tail = value
 
 
 def _xml_safe_text(text: str) -> str:
-    return "".join(
-        character
-        for character in text
-        if character in "\t\n\r" or ord(character) >= 0x20
+    if any(not _is_xml_10_character(ord(character)) for character in text):
+        raise ValueError("text contains an XML 1.0-forbidden character")
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("text is not valid UTF-8 data") from exc
+    return text
+
+
+def _is_xml_10_character(codepoint: int) -> bool:
+    return (
+        codepoint in (0x09, 0x0A, 0x0D)
+        or 0x20 <= codepoint <= 0xD7FF
+        or 0xE000 <= codepoint <= 0xFFFD
+        or 0x10000 <= codepoint <= 0x10FFFF
     )
 
 
@@ -134,9 +178,9 @@ def _replace_body(entries: dict[str, bytes], paragraphs: list[RenderParagraph]) 
         paragraphs,
         entries["Contents/section0.xml"],
     )
-    entries["Preview/PrvText.txt"] = "\n".join(
-        paragraph.text for paragraph in paragraphs
-    ).encode("utf-8")
+    entries["Preview/PrvText.txt"] = "\n".join(paragraph.text for paragraph in paragraphs).encode(
+        "utf-8"
+    )
 
 
 def _write_package(path: Path, entries: dict[str, bytes]) -> None:
