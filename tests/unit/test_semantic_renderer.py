@@ -4,12 +4,13 @@ import copy
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 from lxml import etree
 from PIL import Image, ImageDraw
 
-from scan2hwpx.hwpx import render_semantic_hwpx, validate_hwpx
-from scan2hwpx.ir.models import BBox
+from scan2hwpx.hwpx import render_semantic_hwpx, semantic, validate_hwpx
+from scan2hwpx.ir.models import BBox, BlockKind
 from scan2hwpx.ocr.providers.fixture import FixtureOcrProvider
 
 
@@ -249,3 +250,52 @@ def test_editable_renderer_rejects_cross_column_passage_outline(tmp_path: Path) 
         assert not section.xpath(
             "//*[local-name()='rect'][./*[local-name()='lineShape'][@style='SOLID']]"
         )
+
+
+def _line(text: str, x0: float, y0: float, x1: float, *, order: int = 0) -> SimpleNamespace:
+    return SimpleNamespace(
+        text=text,
+        bbox=SimpleNamespace(pixel=(x0, y0, x1, y0 + 26.0)),
+        reading_order=order,
+        kind=BlockKind.UNKNOWN,
+        style={"layout_column": 0},
+    )
+
+
+def test_flow_keeps_short_source_lines_and_joins_full_ones() -> None:
+    blocks = [
+        _line("내 고장 칠월은", 100, 100, 260),
+        _line("청포도가 익어가는 시절", 100, 127, 330),
+        _line("가득 찬 산문 첫째 줄입니다", 100, 154, 600),
+        _line("이어지는 산문 둘째 줄입니다", 100, 181, 600),
+    ]
+
+    paragraphs = semantic._flow_paragraphs(blocks, (90, 90, 610, 400))
+
+    assert [text for text, *_ in paragraphs] == [
+        "내 고장 칠월은",
+        "청포도가 익어가는 시절",
+        "가득 찬 산문 첫째 줄입니다 이어지는 산문 둘째 줄입니다",
+    ]
+
+
+def test_flow_pads_the_source_lines_skipped_between_paragraphs() -> None:
+    blocks = [
+        _line("1. 첫 문항", 100, 100, 600),
+        _line("둘째 줄", 100, 127, 600),
+        _line("2. 다음 문항", 100, 208, 600),
+    ]
+
+    paragraphs = semantic._flow_paragraphs(blocks, (90, 90, 610, 400))
+
+    assert [blank_lines for *_, blank_lines in paragraphs] == [0, 2]
+
+
+def test_flow_metrics_reproduce_source_character_width_and_line_pitch() -> None:
+    blocks = [_line("가" * 30, 100, 100 + 27 * index, 430) for index in range(12)]
+
+    advances, pitches = semantic._flow_samples(blocks, 1000, 1400)
+
+    # 11 px/char and 27 px/line on a 1000x1400 page mapped to the HWPX body.
+    assert semantic._flow_metrics(advances, pitches, min_samples=5) == (760, 204)
+    assert semantic._flow_metrics(advances[:4], pitches[:4], min_samples=5) is None

@@ -32,9 +32,11 @@ LEFT_PARA_ID = "11"
 BOLD_CHAR_ID = "7"
 REGULAR_CHAR_ID = "2"
 EDITABLE_TEXT_CONFIDENCE = 0.75
-READABLE_LEFT_PARA_ID = "21"
-READABLE_CENTER_PARA_ID = "22"
 FLOW_TEXT_HEIGHT = 800
+FLOW_LINE_SPACING = 135
+# Hancom 2024 advances the template's body font by about 0.82 em per character
+# of Korean exam text including spaces (measured from its PDF output at 8 pt).
+HANCOM_ADVANCE_PER_EM = 0.82
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,12 @@ class SemanticRenderStats:
     editable_text_boxes: int
     editable_text_characters: int
     package_bytes: int
+
+
+@dataclass(frozen=True)
+class _FlowStyles:
+    char: dict[bool, str]  # by bold
+    para: dict[bool, str]  # by centered
 
 
 @dataclass(frozen=True)
@@ -88,7 +96,19 @@ def render_semantic_hwpx(
     table_template, border_fill = _load_table_parts()
     _install_table_border_fill(header, border_fill)
     _install_semantic_text_styles(header)
-    ocr_text_styles = _install_ocr_text_styles(header)
+    advances: list[float] = []
+    pitches: list[float] = []
+    for ir_page in document.pages:
+        page_advances, page_pitches = _flow_samples(ir_page.blocks, ir_page.width, ir_page.height)
+        advances.extend(page_advances)
+        pitches.extend(page_pitches)
+    document_metrics = _flow_metrics(advances, pitches, min_samples=10) or (
+        FLOW_TEXT_HEIGHT,
+        FLOW_LINE_SPACING,
+    )
+    flow_styles: dict[tuple[int, int], _FlowStyles] = {}
+    document_styles = _flow_styles(header, flow_styles, *document_metrics)
+    ocr_text_styles = document_styles.char
     paragraphs = cast(list[etree._Element], section.xpath("./hp:p", namespaces={"hp": HP}))
     background_picture = cast(
         etree._Element,
@@ -160,7 +180,7 @@ def render_semantic_hwpx(
                 passage_blocks,
                 page_width,
                 page_height,
-                ocr_text_styles,
+                document_styles,
                 control_id=1_450_000_000 + page_index * 100 + passage_index,
                 z_order=500 + editable_text_boxes,
             )
@@ -201,12 +221,15 @@ def render_semantic_hwpx(
         for group_index, (bbox, flow_blocks) in enumerate(
             _column_flow_groups(ir_page, editable_blocks, page_width, page_height), start=1
         ):
+            box_metrics = _flow_metrics(
+                *_flow_samples(flow_blocks, page_width, page_height), min_samples=5
+            )
             text_box = _build_text_box(
                 flow_blocks,
                 bbox,
                 page_width,
                 page_height,
-                ocr_text_styles=ocr_text_styles,
+                styles=_flow_styles(header, flow_styles, *(box_metrics or document_metrics)),
                 control_id=1_500_000_000 + page_index * 100 + group_index,
                 z_order=1_000 + editable_text_boxes,
             )
@@ -317,21 +340,6 @@ def _install_semantic_text_styles(header: etree._Element) -> None:
         align = cast(etree._Element, centered.xpath("./hh:align", namespaces={"hh": HH})[0])
         align.set("horizontal", "CENTER")
         para_container.append(centered)
-    for style_id, alignment in (
-        (READABLE_LEFT_PARA_ID, "LEFT"),
-        (READABLE_CENTER_PARA_ID, "CENTER"),
-    ):
-        if para_container.xpath(f"./hh:paraPr[@id='{style_id}']", namespaces={"hh": HH}):
-            continue
-        readable = copy.deepcopy(left_source)
-        readable.set("id", style_id)
-        readable.set("snapToGrid", "0")
-        align = cast(etree._Element, readable.xpath("./hh:align", namespaces={"hh": HH})[0])
-        align.set("horizontal", alignment)
-        for spacing in readable.xpath(".//hh:lineSpacing", namespaces={"hh": HH}):
-            spacing.set("type", "PERCENT")
-            spacing.set("value", "135")
-        para_container.append(readable)
     para_container.set("itemCnt", str(len(para_container)))
     char_container = char_containers[0]
     if not char_container.xpath(f"./hh:charPr[@id='{BOLD_CHAR_ID}']", namespaces={"hh": HH}):
@@ -346,42 +354,115 @@ def _install_semantic_text_styles(header: etree._Element) -> None:
     char_container.set("itemCnt", str(len(char_container)))
 
 
-def _install_ocr_text_styles(header: etree._Element) -> dict[tuple[int, bool], str]:
-    containers = cast(
+def _flow_samples(
+    blocks: list[Any], page_width: float, page_height: float
+) -> tuple[list[float], list[float]]:
+    """Per-character advances and line pitches of the source text, in HWPUNIT."""
+    advances: list[float] = []
+    pitches: list[float] = []
+    x_scale = PAGE_WIDTH_HWP / page_width
+    y_scale = PAGE_HEIGHT_HWP / page_height
+    columns: dict[object, list[Any]] = {}
+    for block in blocks:
+        text = str(block.text).strip()
+        x0, _y0, x1, _y1 = (float(value) for value in block.bbox.pixel)
+        if len(text) > 20:
+            advances.append((x1 - x0) / len(text) * x_scale)
+        style = block.style if isinstance(block.style, dict) else {}
+        columns.setdefault(style.get("layout_column"), []).append(block)
+    for column_blocks in columns.values():
+        column_blocks.sort(key=lambda block: float(block.bbox.pixel[1]))
+        for upper, lower in pairwise(column_blocks):
+            height = float(upper.bbox.pixel[3]) - float(upper.bbox.pixel[1])
+            step = float(lower.bbox.pixel[1]) - float(upper.bbox.pixel[1])
+            if height * 0.8 < step < height * 1.8:
+                pitches.append(step * y_scale)
+    return advances, pitches
+
+
+def _flow_metrics(
+    advances: list[float], pitches: list[float], *, min_samples: int
+) -> tuple[int, int] | None:
+    """Font height (HWPUNIT) and line-spacing percent that reproduce the source text.
+
+    Reflowed text stays near its source position only if Hancom wraps lines at
+    about the same characters and advances each line by the source line pitch.
+    Text density differs between pages and columns, so callers measure per box.
+    """
+    if len(advances) < min_samples or len(pitches) < min_samples:
+        return None
+    font_height = float(np.median(advances)) / HANCOM_ADVANCE_PER_EM
+    font_height = round(min(1200.0, max(600.0, font_height)) / 10) * 10
+    line_spacing = round(float(np.median(pitches)) / font_height * 100)
+    return int(font_height), min(250, max(100, line_spacing))
+
+
+def _flow_styles(
+    header: etree._Element,
+    cache: dict[tuple[int, int], _FlowStyles],
+    font_height: int,
+    line_spacing: int,
+) -> _FlowStyles:
+    """Character and paragraph styles for flow text, created once per metric pair."""
+    key = (font_height, line_spacing)
+    if key in cache:
+        return cache[key]
+    char_containers = cast(
         list[etree._Element],
         header.xpath(".//hh:charProperties", namespaces={"hh": HH}),
     )
-    if len(containers) != 1:
-        raise RuntimeError("HWPX header character-style list is invalid")
-    container = containers[0]
-    sources = cast(
+    para_containers = cast(
         list[etree._Element],
-        container.xpath(f"./hh:charPr[@id='{REGULAR_CHAR_ID}']", namespaces={"hh": HH}),
+        header.xpath(".//hh:paraProperties", namespaces={"hh": HH}),
     )
-    if len(sources) != 1:
-        raise RuntimeError("regular HWPX character style is missing")
-    keys = [(FLOW_TEXT_HEIGHT, bold) for bold in (False, True)]
-    result: dict[tuple[int, bool], str] = {}
-    next_style_id = max(int(style.get("id", "-1")) for style in container) + 1
-    for index, (height, bold) in enumerate(keys):
-        style_id = str(next_style_id + index)
-        style = copy.deepcopy(sources[0])
-        style.set("id", style_id)
-        style.set("height", str(height))
-        style.set("textColor", "#000000")
-        for existing_bold in style.xpath("./hh:bold", namespaces={"hh": HH}):
-            style.remove(existing_bold)
+    if len(char_containers) != 1 or len(para_containers) != 1:
+        raise RuntimeError("HWPX text style lists are invalid")
+    char_container, para_container = char_containers[0], para_containers[0]
+    char_sources = cast(
+        list[etree._Element],
+        char_container.xpath(f"./hh:charPr[@id='{REGULAR_CHAR_ID}']", namespaces={"hh": HH}),
+    )
+    para_sources = cast(
+        list[etree._Element],
+        para_container.xpath(f"./hh:paraPr[@id='{LEFT_PARA_ID}']", namespaces={"hh": HH}),
+    )
+    if len(char_sources) != 1 or len(para_sources) != 1:
+        raise RuntimeError("regular HWPX text styles are missing")
+    char_ids: dict[bool, str] = {}
+    for bold in (False, True):
+        char_style = copy.deepcopy(char_sources[0])
+        char_style.set("height", str(font_height))
+        char_style.set("textColor", "#000000")
+        for existing_bold in char_style.xpath("./hh:bold", namespaces={"hh": HH}):
+            char_style.remove(existing_bold)
         if bold:
-            etree.SubElement(style, f"{{{HH}}}bold")
-        container.append(style)
-        result[(height, bold)] = style_id
+            etree.SubElement(char_style, f"{{{HH}}}bold")
+        char_ids[bold] = _append_style(char_container, char_style)
+    para_ids: dict[bool, str] = {}
+    for centered in (False, True):
+        para_style = copy.deepcopy(para_sources[0])
+        para_style.set("snapToGrid", "0")
+        align = cast(etree._Element, para_style.xpath("./hh:align", namespaces={"hh": HH})[0])
+        align.set("horizontal", "CENTER" if centered else "LEFT")
+        for spacing in para_style.xpath(".//hh:lineSpacing", namespaces={"hh": HH}):
+            spacing.set("type", "PERCENT")
+            spacing.set("value", str(line_spacing))
+        para_ids[centered] = _append_style(para_container, para_style)
+    cache[key] = _FlowStyles(char=char_ids, para=para_ids)
+    return cache[key]
+
+
+def _append_style(container: etree._Element, style: etree._Element) -> str:
+    style_id = str(max(int(item.get("id", "-1")) for item in container) + 1)
+    style.set("id", style_id)
+    container.append(style)
     container.set("itemCnt", str(len(container)))
-    return result
+    return style_id
 
 
-def _ocr_style_key(block: Any) -> tuple[int, bool]:
+def _ocr_bold(block: Any) -> bool:
     kind = getattr(block.kind, "value", str(block.kind))
-    return FLOW_TEXT_HEIGHT, kind in {"instruction", "question", "title"}
+    return kind in {"instruction", "question", "title"}
 
 
 def _build_editable_backgrounds(
@@ -498,7 +579,7 @@ def _build_text_box(
     page_width: int,
     page_height: int,
     *,
-    ocr_text_styles: dict[tuple[int, bool], str],
+    styles: _FlowStyles,
     control_id: int,
     z_order: int,
 ) -> etree._Element:
@@ -590,7 +671,7 @@ def _build_text_box(
         hasTextRef="0",
         hasNumRef="0",
     )
-    _write_flow_paragraphs(sublist, blocks, bbox, ocr_text_styles)
+    _write_flow_paragraphs(sublist, blocks, bbox, styles)
     etree.SubElement(
         draw_text,
         f"{{{HP}}}textMargin",
@@ -638,7 +719,7 @@ def _build_passage_outline(
     blocks: list[Any],
     page_width: int,
     page_height: int,
-    ocr_text_styles: dict[tuple[int, bool], str],
+    styles: _FlowStyles,
     *,
     control_id: int,
     z_order: int,
@@ -658,7 +739,7 @@ def _build_passage_outline(
         ),
         page_width,
         page_height,
-        ocr_text_styles=ocr_text_styles,
+        styles=styles,
         control_id=control_id,
         z_order=z_order,
     )
@@ -805,14 +886,14 @@ def _write_flow_paragraphs(
     sublist: etree._Element,
     blocks: list[Any],
     bbox: tuple[float, float, float, float],
-    ocr_text_styles: dict[tuple[int, bool], str],
+    styles: _FlowStyles,
 ) -> None:
     def append_paragraph(text_value: str, *, bold: bool, centered: bool) -> None:
         paragraph = etree.SubElement(
             sublist,
             f"{{{HP}}}p",
             id="0",
-            paraPrIDRef=READABLE_CENTER_PARA_ID if centered else READABLE_LEFT_PARA_ID,
+            paraPrIDRef=styles.para[centered],
             styleIDRef="0",
             pageBreak="0",
             columnBreak="0",
@@ -821,7 +902,7 @@ def _write_flow_paragraphs(
         run = etree.SubElement(
             paragraph,
             f"{{{HP}}}run",
-            charPrIDRef=ocr_text_styles[(FLOW_TEXT_HEIGHT, bold)],
+            charPrIDRef=styles.char[bold],
         )
         text = etree.SubElement(run, f"{{{HP}}}t")
         text.text = text_value
@@ -849,6 +930,15 @@ def _flow_paragraphs(
         max(1.0, float(block.bbox.pixel[3]) - float(block.bbox.pixel[1])) for block in ordered
     ]
     typical_height = float(np.median(heights)) if heights else 24.0
+    steps = [
+        float(lower.bbox.pixel[1]) - float(upper.bbox.pixel[1])
+        for upper, lower in pairwise(ordered)
+    ]
+    pitches = [step for step in steps if typical_height * 0.8 < step < typical_height * 1.8]
+    line_pitch = float(np.median(pitches)) if pitches else typical_height * 1.15
+    # A line that stops well short of the text's right edge ends there in the
+    # source (poem lines, list items, paragraph ends), so it must not be joined.
+    text_right = float(np.percentile([float(block.bbox.pixel[2]) for block in ordered], 90))
     result: list[dict[str, Any]] = []
     box_center = (bbox[0] + bbox[2]) / 2
     box_width = max(1.0, bbox[2] - bbox[0])
@@ -856,7 +946,7 @@ def _flow_paragraphs(
         text = str(block.text).strip()
         x0, y0, x1, y1 = (float(value) for value in block.bbox.pixel)
         center = (y0 + y1) / 2
-        bold = _ocr_style_key(block)[1]
+        bold = _ocr_bold(block)
         same_row = bool(result) and abs(center - float(result[-1]["last_center"])) <= typical_height * 0.45
         gap = float("inf") if not result else y0 - float(result[-1]["y1"])
         starts_paragraph = re.match(
@@ -870,6 +960,7 @@ def _flow_paragraphs(
                 gap > typical_height * 0.55
                 or starts_paragraph is not None
                 or bold != bool(result[-1]["bold"])
+                or float(result[-1]["last_x1"]) < text_right - typical_height * 1.5
             )
         )
         if not new_paragraph:
@@ -887,11 +978,15 @@ def _flow_paragraphs(
             result[-1]["y1"] = max(float(result[-1]["y1"]), y1)
             result[-1]["last_center"] = center
             result[-1]["last_x1"] = x1
+            if not same_row:
+                result[-1]["last_y0"] = y0
             continue
         blank_lines = 0
         if result:
-            source_gap = max(0.0, y0 - float(result[-1]["y1"]))
-            blank_lines = min(20, max(0, round(source_gap / (typical_height * 1.15)) - 1))
+            # Each output paragraph advances one line pitch, so pad with the lines
+            # the source skipped between the previous line's top and this one.
+            source_lines = round((y0 - float(result[-1]["last_y0"])) / line_pitch)
+            blank_lines = min(20, max(0, source_lines - 1))
         row_center = (x0 + x1) / 2
         centered = (
             re.fullmatch(r"-?\s*<[^>]{1,16}>\s*-?", text) is not None
@@ -910,6 +1005,7 @@ def _flow_paragraphs(
                 "y1": y1,
                 "last_center": center,
                 "last_x1": x1,
+                "last_y0": y0,
             }
         )
     return [
@@ -925,7 +1021,7 @@ def _build_table(
     blocks: list[Any],
     page_width: int,
     page_height: int,
-    ocr_text_styles: dict[tuple[int, bool], str],
+    ocr_text_styles: dict[bool, str],
     *,
     control_id: int,
     z_order: int,
@@ -1065,7 +1161,7 @@ def _write_cell_paragraphs(
     centered: bool,
     bold: bool,
     page_height: float,
-    ocr_text_styles: dict[tuple[int, bool], str],
+    ocr_text_styles: dict[bool, str],
 ) -> None:
     sublist = cast(
         etree._Element,
@@ -1085,8 +1181,7 @@ def _write_cell_paragraphs(
         if block is None:
             run.set("charPrIDRef", BOLD_CHAR_ID if bold else REGULAR_CHAR_ID)
         else:
-            height, inferred_bold = _ocr_style_key(block)
-            run.set("charPrIDRef", ocr_text_styles[(height, bold or inferred_bold)])
+            run.set("charPrIDRef", ocr_text_styles[bold or _ocr_bold(block)])
         if block is not None:
             text = etree.SubElement(run, f"{{{HP}}}t")
             text.text = str(block.text).strip()
