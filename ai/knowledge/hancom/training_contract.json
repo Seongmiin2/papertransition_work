@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "consumer": "document-author-model-b",
+  "knowledge_mode": "retrieval_augmented_and_evaluation_grounding",
+  "documents_are_supervised_targets": false,
+  "required_training_example": {
+    "input": [
+      "content_ir",
+      "capability_profile",
+      "retrieved_official_context"
+    ],
+    "target": [
+      "human_verified_hwpx_plan",
+      "spec_refs"
+    ]
+  },
+  "experiment_must_record": [
+    "base_model_id",
+    "base_model_license",
+    "model_revision",
+    "knowledge_manifest_sha256",
+    "capability_profile_sha256",
+    "schema_version",
+    "prompt_version",
+    "dataset_sha256",
+    "train_validation_test_document_ids",
+    "training_parameters",
+    "held_out_metrics"
+  ],
+  "promotion_gates": [
+    "schema_valid_rate_equals_1",
+    "content_reference_coverage_equals_1",
+    "unauthorized_content_change_count_equals_0",
+    "held_out_hwpx_validation_passes",
+    "hancom_round_trip_passes"
+  ]
+}

@@ -1,0 +1,187 @@
+{
+  "schema_version": "1.0",
+  "retrieved_at": "2026-09-07",
+  "raw_directory": "output/hancom-knowledge/raw",
+  "policy": {
+    "intended_consumer": "document-author-model-b",
+    "excluded_consumers": [
+      "ocr-recognizer",
+      "document-perception-model-a"
+    ],
+    "usage": "retrieval, compiler rules, and conformance evaluation",
+    "fine_tuning_status": "not_trained",
+    "notice": "Official documentation is reference material, not supervised target data. Review each source's redistribution terms before shipping raw or extracted copies."
+  },
+  "sources": [
+    {
+      "id": "hancom-automation-2504",
+      "title": "HwpAutomation 2504",
+      "source_type": "pdf",
+      "revision": "devcenter-archive@213c7faad552b4853b525887e36accb6025e837b",
+      "url": "https://raw.githubusercontent.com/hancom-io/devcenter-archive/213c7faad552b4853b525887e36accb6025e837b/hwp-automation/HwpAutomation_2504.pdf",
+      "local_filename": "hwp_automation_2504.pdf",
+      "sha256": "917142de2704ae037b0132f5a344ce5331b1fd96cc19dd574666aaacfbf0268c",
+      "bytes": 988629,
+      "authority": "Hancom Inc.",
+      "license": {
+        "spdx": null,
+        "redistribution": "Hancom documentation terms; keep original unmodified and review current terms before distribution.",
+        "terms_url": "https://download.hancom.com/support/downloadCenter/hwpOwpml"
+      },
+      "tags": ["automation", "api", "hwp", "hwpx"]
+    },
+    {
+      "id": "hancom-action-table-2504",
+      "title": "HwpAutomation Action Table 2504",
+      "source_type": "pdf",
+      "revision": "devcenter-archive@213c7faad552b4853b525887e36accb6025e837b",
+      "url": "https://raw.githubusercontent.com/hancom-io/devcenter-archive/213c7faad552b4853b525887e36accb6025e837b/hwp-automation/ActionTable_2504.pdf",
+      "local_filename": "action_table_2504.pdf",
+      "sha256": "bb876a95ea4e0f4b052c94188a1390b5f981161223759f59f52fc324c8130a87",
+      "bytes": 1836391,
+      "authority": "Hancom Inc.",
+      "license": {
+        "spdx": null,
+        "redistribution": "Hancom documentation terms; keep original unmodified and review current terms before distribution.",
+        "terms_url": "https://download.hancom.com/support/downloadCenter/hwpOwpml"
+      },
+      "tags": ["automation", "action", "api"]
+    },
+    {
+      "id": "hancom-parameter-set-table-2504",
+      "title": "HwpAutomation Parameter Set Table 2504",
+      "source_type": "pdf",
+      "revision": "devcenter-archive@213c7faad552b4853b525887e36accb6025e837b",
+      "url": "https://raw.githubusercontent.com/hancom-io/devcenter-archive/213c7faad552b4853b525887e36accb6025e837b/hwp-automation/ParameterSetTable_2504.pdf",
+      "local_filename": "parameter_set_table_2504.pdf",
+      "sha256": "6fa10e0ae69711af99a03e54c321c6c922796bd943badf8c21b2c7dfb780ad6e",
+      "bytes": 2296519,
+      "authority": "Hancom Inc.",
+      "license": {
+        "spdx": null,
+        "redistribution": "Hancom documentation terms; keep original unmodified and review current terms before distribution.",
+        "terms_url": "https://download.hancom.com/support/downloadCenter/hwpOwpml"
+      },
+      "tags": ["automation", "parameter-set", "api"]
+    },
+    {
+      "id": "hancom-event-handler-2504",
+      "title": "HwpAutomation Event Handler 2504",
+      "source_type": "pdf",
+      "revision": "devcenter-archive@213c7faad552b4853b525887e36accb6025e837b",
+      "url": "https://raw.githubusercontent.com/hancom-io/devcenter-archive/213c7faad552b4853b525887e36accb6025e837b/hwp-automation/%ED%95%9C%EA%B8%80%EC%98%A4%ED%86%A0%EB%A9%94%EC%9D%B4%EC%85%98EventHandler%EC%B6%94%EA%B0%80_2504.pdf",
+      "local_filename": "event_handler_2504.pdf",
+      "sha256": "ed58788419119d2c73e2abdc8195edeb2439c5bd1a14a2c91ec034c5d25b3afe",
+      "bytes": 117892,
+      "authority": "Hancom Inc.",
+      "license": {
+        "spdx": null,
+        "redistribution": "Hancom documentation terms; keep original unmodified and review current terms before distribution.",
+        "terms_url": "https://download.hancom.com/support/downloadCenter/hwpOwpml"
+      },
+      "tags": ["automation", "event-handler", "api"]
+    },
+    {
+      "id": "hancom-hwpx-format",
+      "title": "HWPX format",
+      "source_type": "html",
+      "revision": "snapshot-2026-09-07",
+      "url": "https://tech.hancom.com/hwpxformat/",
+      "local_filename": "hancom_hwpx_format.html",
+      "sha256": "4df04de85f2031c7feac6ad9e31b70678b2bfedcfade47eda1b7c578a5421f94",
+      "bytes": 143202,
+      "authority": "Hancom Inc.",
+      "license": {
+        "spdx": null,
+        "redistribution": "Copyrighted web documentation; keep as an internal snapshot unless separate permission is confirmed.",
+        "terms_url": "https://tech.hancom.com/hwpxformat/"
+      },
+      "tags": ["hwpx", "owpml", "package", "manifest", "header", "section", "bindata"]
+    },
+    {
+      "id": "hancom-hwpx-parsing-1",
+      "title": "Python HWPX parsing 1",
+      "source_type": "html",
+      "revision": "snapshot-2026-09-07",
+      "url": "https://tech.hancom.com/python-hwpx-parsing-1/",
+      "local_filename": "hancom_hwpx_parsing_1.html",
+      "sha256": "002bc4588d00736a27ef0a2eae49f6ca25eab3065a080ae45ed9164fda085a91",
+      "bytes": 155203,
+      "authority": "Hancom Inc.",
+      "license": {
+        "spdx": null,
+        "redistribution": "Copyrighted web documentation; keep as an internal snapshot unless separate permission is confirmed.",
+        "terms_url": "https://tech.hancom.com/python-hwpx-parsing-1/"
+      },
+      "tags": ["hwpx", "python", "parsing", "namespace", "manifest", "header"]
+    },
+    {
+      "id": "hancom-hwpx-parsing-2",
+      "title": "Python HWPX parsing 2",
+      "source_type": "html",
+      "revision": "snapshot-2026-09-07",
+      "url": "https://tech.hancom.com/python-hwpx-parsing-2/",
+      "local_filename": "hancom_hwpx_parsing_2.html",
+      "sha256": "232060bed1176154500db937e3e668f292efe5f5532a096afb3492d33f745950",
+      "bytes": 194013,
+      "authority": "Hancom Inc.",
+      "license": {
+        "spdx": null,
+        "redistribution": "Copyrighted web documentation; keep as an internal snapshot unless separate permission is confirmed.",
+        "terms_url": "https://tech.hancom.com/python-hwpx-parsing-2/"
+      },
+      "tags": ["hwpx", "python", "parsing", "paragraph", "table", "style-reference"]
+    },
+    {
+      "id": "hancom-hwp-owpml-download-center",
+      "title": "HWP and OWPML public format download center",
+      "source_type": "html",
+      "revision": "snapshot-2026-09-07",
+      "url": "https://download.hancom.com/support/downloadCenter/hwpOwpml",
+      "local_filename": "hancom_hwp_owpml_download_center.html",
+      "sha256": "a5d25ca3b47242557ffba1d915ea04b511ea3e87ee7883b8651409d87aab2ec5",
+      "bytes": 232409,
+      "authority": "Hancom Inc.",
+      "license": {
+        "spdx": null,
+        "redistribution": "The page permits distribution of unmodified originals under its stated terms; review the current page before product distribution.",
+        "terms_url": "https://download.hancom.com/support/downloadCenter/hwpOwpml"
+      },
+      "tags": ["hwp", "hwpx", "owpml", "license", "format"]
+    },
+    {
+      "id": "hancom-hwpx-owpml-model",
+      "title": "Hancom HWPX OWPML model",
+      "source_type": "repository_zip",
+      "revision": "1453388472c703a4b299a0834f425cdac16644b9",
+      "url": "https://codeload.github.com/hancom-io/hwpx-owpml-model/zip/1453388472c703a4b299a0834f425cdac16644b9",
+      "local_filename": "hwpx_owpml_model_1453388.zip",
+      "sha256": "ce1b5eb549157da24c9c66360587d344dd2de685624c03ff89413b6c8cb45305",
+      "bytes": 1111584,
+      "authority": "Hancom Inc.",
+      "license": {
+        "spdx": "Apache-2.0",
+        "redistribution": "Retain LICENSE and NOTICE when redistributing the repository or derivatives.",
+        "terms_url": "https://github.com/hancom-io/hwpx-owpml-model/blob/1453388472c703a4b299a0834f425cdac16644b9/LICENSE.txt"
+      },
+      "tags": ["hwpx", "owpml", "reference-implementation", "xml", "element"]
+    },
+    {
+      "id": "hancom-dvc",
+      "title": "Hancom HWPX Document Validation Checker",
+      "source_type": "repository_zip",
+      "revision": "19a985ec047df629240cbcbe2cec17f19ad1a014",
+      "url": "https://codeload.github.com/hancom-io/dvc/zip/19a985ec047df629240cbcbe2cec17f19ad1a014",
+      "local_filename": "dvc_19a985e.zip",
+      "sha256": "59048c906c2119a35f6e9abb933749f3d7cc658c9c1318cbe75dcc68f9a7c33a",
+      "bytes": 132040,
+      "authority": "Hancom Inc.",
+      "license": {
+        "spdx": "Apache-2.0",
+        "redistribution": "Retain LICENSE and NOTICE when redistributing the repository or derivatives.",
+        "terms_url": "https://github.com/hancom-io/dvc/blob/19a985ec047df629240cbcbe2cec17f19ad1a014/LICENSE"
+      },
+      "tags": ["hwpx", "validation", "conformance", "reference-implementation"]
+    }
+  ]
+}

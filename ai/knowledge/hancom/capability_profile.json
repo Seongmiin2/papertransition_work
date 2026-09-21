@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "profile_id": "exam2hwpx-authoring-v1",
+  "target_format": "hwpx",
+  "knowledge_manifest": "sources.json",
+  "content_policy": "immutable",
+  "layout_policy": "clean_reauthor",
+  "planner_may_emit": [
+    "paragraph",
+    "table",
+    "image",
+    "formula",
+    "page_break",
+    "column_break"
+  ],
+  "planner_must_reference_content": true,
+  "compiler_owns": [
+    "xml",
+    "namespaces",
+    "charPrIDRef",
+    "paraPrIDRef",
+    "style_and_resource_ids",
+    "item_counts",
+    "relationships",
+    "media_names",
+    "content_manifest",
+    "zip_entry_order"
+  ],
+  "planner_forbidden": [
+    "raw_xml",
+    "local_file_path",
+    "external_url",
+    "macro",
+    "script",
+    "automation_command"
+  ],
+  "requires_review": [
+    "embedded_object",
+    "chart",
+    "macro",
+    "unsupported_equation",
+    "generated_body_text"
+  ],
+  "retrieval_routes": {
+    "package": ["hwpx", "owpml", "package", "manifest", "bindata"],
+    "styles": ["hwpx", "header", "style-reference", "paragraph"],
+    "tables": ["hwpx", "table", "parameter-set"],
+    "automation": ["automation", "action", "parameter-set", "event-handler"],
+    "validation": ["validation", "conformance", "reference-implementation"]
+  }
+}
