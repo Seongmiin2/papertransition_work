@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 
 from scan2hwpx.hwpx import render_semantic_hwpx, semantic, validate_hwpx
 from scan2hwpx.hwpx.fidelity import _load_template
-from scan2hwpx.ir.models import BBox, BlockKind
+from scan2hwpx.ir.models import BBox, BlockKind, Column
 from scan2hwpx.ocr.providers.fixture import FixtureOcrProvider
 from scan2hwpx.vision.layout_dataset import TableGrid
 
@@ -216,6 +216,12 @@ def test_editable_renderer_rejects_cross_column_passage_outline(tmp_path: Path) 
     image_path = tmp_path / "page-1.png"
     Image.new("RGB", (1000, 1400), "white").save(image_path)
     document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
+    page = document.pages[0]
+    page.blocks[0].bbox = BBox(pixel=(100, 60, 900, 110), normalized=(0.1, 0.043, 0.9, 0.079))
+    page.columns = [
+        Column(index=0, bbox=BBox(pixel=(0, 0, 500, 1400), normalized=(0, 0, 0.5, 1))),
+        Column(index=1, bbox=BBox(pixel=(500, 0, 1000, 1400), normalized=(0.5, 0, 1, 1))),
+    ]
     layout_seed = tmp_path / "layout_seed.json"
     layout_seed.write_text(
         json.dumps(
@@ -239,21 +245,25 @@ def test_editable_renderer_rejects_cross_column_passage_outline(tmp_path: Path) 
         ),
         encoding="utf-8",
     )
-    output = tmp_path / "cross-column.hwpx"
-
-    render_semantic_hwpx(
-        [image_path],
-        document,
-        layout_seed,
-        output,
-        include_page_backgrounds=False,
-    )
-
-    with zipfile.ZipFile(output) as archive:
-        section = etree.fromstring(archive.read("Contents/section0.xml"))
-        assert not section.xpath(
-            "//*[local-name()='rect'][./*[local-name()='lineShape'][@style='SOLID']]"
+    def outlines(name: str) -> int:
+        output = tmp_path / name
+        render_semantic_hwpx(
+            [image_path],
+            document,
+            layout_seed,
+            output,
+            include_page_backgrounds=False,
         )
+        with zipfile.ZipFile(output) as archive:
+            section = etree.fromstring(archive.read("Contents/section0.xml"))
+        return len(
+            section.xpath("//*[local-name()='rect'][./*[local-name()='lineShape'][@style='SOLID']]")
+        )
+
+    assert outlines("cross-column.hwpx") == 0
+    # The same box on a one-column page spans its text width, not two columns.
+    page.columns = page.columns[:1]
+    assert outlines("one-column.hwpx") == 1
 
 
 def _line(text: str, x0: float, y0: float, x1: float, *, height: float = 26.0) -> SimpleNamespace:

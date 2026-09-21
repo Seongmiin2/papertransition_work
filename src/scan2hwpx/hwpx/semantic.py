@@ -180,6 +180,7 @@ def render_semantic_hwpx(
             regions.tables,
             page_width,
             page_height,
+            single_column=len(ir_page.columns) <= 1,
         )
         for passage_index, (region, passage_blocks) in enumerate(passage_groups, start=1):
             passage = _build_passage_outline(
@@ -226,6 +227,7 @@ def render_semantic_hwpx(
             for block in ir_page.blocks
             if _eligible_editable_block(block, scaled_images, regions.tables)
         ]
+        page_lines = _line_reference(_source_rows(editable_blocks))
         for group_index, (bbox, flow_blocks) in enumerate(
             _column_flow_groups(ir_page, editable_blocks, page_width, page_height), start=1
         ):
@@ -239,6 +241,7 @@ def render_semantic_hwpx(
                 page_height,
                 book=book,
                 metrics=box_metrics or document_metrics,
+                reference=page_lines,
                 control_id=1_500_000_000 + page_index * 100 + group_index,
                 z_order=1_000 + editable_text_boxes,
             )
@@ -606,6 +609,7 @@ def _build_text_box(
     metrics: tuple[int, int],
     control_id: int,
     z_order: int,
+    reference: tuple[float | None, float] | None = None,
 ) -> etree._Element:
     x0, y0, x1, y1 = bbox
     width = _x_hwp(max(2.0, x1 - x0), page_width)
@@ -695,7 +699,7 @@ def _build_text_box(
         hasTextRef="0",
         hasNumRef="0",
     )
-    _write_line_paragraphs(sublist, blocks, bbox, page_width, page_height, book, metrics)
+    _write_line_paragraphs(sublist, blocks, bbox, page_width, page_height, book, metrics, reference)
     etree.SubElement(
         draw_text,
         f"{{{HP}}}textMargin",
@@ -924,20 +928,23 @@ def _write_line_paragraphs(
     page_height: int,
     book: _StyleBook,
     metrics: tuple[int, int],
+    reference: tuple[float | None, float] | None = None,
 ) -> None:
     """One paragraph per source line, each placed at its source indent and height.
 
     A line advances to the next source line by its own fixed pitch, and a
     paragraph's spacing-before absorbs larger gaps. Both are measured from where
     Hancom put the previous line, so rounding errors never accumulate.
+    reference is the page's typical (pixels per em, line height), used when the
+    box holds too few lines to tell its own titles and small print apart.
     """
     font_height, pitch = metrics
     x_scale = PAGE_WIDTH_HWP / page_width
     y_scale = PAGE_HEIGHT_HWP / page_height
     rows = _source_rows(blocks)
-    typical_height = float(np.median([row.y1 - row.y0 for row in rows]))
-    em_widths = [row.em_width for row in rows if row.em_width is not None]
-    typical_em = float(np.median(em_widths)) if em_widths else None
+    typical_em, typical_height = _line_reference(rows)
+    if reference is not None and sum(row.em_width is not None for row in rows) < 5:
+        typical_em, typical_height = reference
     box_width = bbox[2] - bbox[0]
     wide = [row.x1 for row in rows if row.x1 - row.x0 >= box_width * 0.6]
     text_right = float(np.percentile(wide, 90)) if wide else float("inf")
@@ -985,6 +992,16 @@ def _write_line_paragraphs(
             merged="0",
         )
         _append_runs(paragraph, row.segments, book, height, SPACE_ADVANCE_PER_EM * height / x_scale)
+
+
+def _line_reference(rows: list[_Row]) -> tuple[float | None, float]:
+    """Typical pixels per em and height of the lines."""
+    em_widths = [row.em_width for row in rows if row.em_width is not None]
+    heights = [row.y1 - row.y0 for row in rows]
+    return (
+        float(np.median(em_widths)) if em_widths else None,
+        float(np.median(heights)) if heights else 24.0,
+    )
 
 
 def _append_runs(
@@ -1365,12 +1382,17 @@ def _passage_groups(
     editable_tables: list[_ImageRegion],
     page_width: int,
     page_height: int,
+    *,
+    single_column: bool = False,
 ) -> list[tuple[_ImageRegion, list[Any]]]:
+    # On a two-column page a box wider than one column spans both, which exam
+    # passages never do; on a one-column page it may span the whole text width.
+    max_width = page_width * (0.95 if single_column else 0.52)
     candidates = [
         region
         for region in regions
         if region.bbox[2] - region.bbox[0] >= page_width * 0.22
-        and region.bbox[2] - region.bbox[0] <= page_width * 0.52
+        and region.bbox[2] - region.bbox[0] <= max_width
         and region.bbox[3] - region.bbox[1] >= page_height * 0.045
         and region.bbox[1] >= page_height * 0.09
         and region.bbox[3] <= page_height * 0.95
