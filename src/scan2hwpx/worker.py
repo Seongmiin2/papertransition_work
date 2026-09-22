@@ -81,7 +81,7 @@ def handle(request: dict[str, Any]) -> None:
     dpi = int(options.get("dpi", 240))
     fusion_mode = str(options.get("mode", "fast"))
     device = str(options.get("device", "auto"))
-    renderer = str(options.get("renderer", "fidelity"))
+    renderer = str(options.get("renderer", "editable"))
     write_diagnostics = bool(options.get("write_diagnostics", True))
     verify_hancom = bool(options.get("verify_hancom", False))
     recognition_value = options.get("recognition_model_dir")

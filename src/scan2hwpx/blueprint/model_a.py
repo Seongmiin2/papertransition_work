@@ -43,8 +43,8 @@ def classify_role(text: str, *, question_started: bool = False) -> BlockKind:
 
     This is the single canonical pattern set behind block-role classification
     (a rule-based stand-in for a future trained "Model A"), shared by
-    exam_parser.parse_questions and clean_layout.build_clean_items so the two
-    renderers stop disagreeing on what counts as a question or choice.
+    exam_parser.parse_questions and the Model A baseline so both agree on
+    what counts as a question or choice.
     """
     if match_question_number(text) is not None:
         return BlockKind.QUESTION

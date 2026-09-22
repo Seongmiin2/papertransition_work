@@ -26,7 +26,7 @@ from .compiler import (
     compile_plan_hwpx,
 )
 from .fidelity import FidelityRenderStats, render_fidelity_hwpx
-from .render import ensure_minimal_template, render_clean_hwpx, render_hwpx
+from .render import ensure_minimal_template, render_hwpx
 from .semantic import SemanticRenderStats, render_semantic_hwpx
 from .validate import ValidationResult, validate_hwpx
 
@@ -57,7 +57,6 @@ __all__ = [
     "compile_plan_hwpx",
     "ensure_minimal_template",
     "image_asset_bundle_sha256",
-    "render_clean_hwpx",
     "render_fidelity_hwpx",
     "render_hwpx",
     "render_semantic_hwpx",

@@ -6,18 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from scan2hwpx.blueprint import model_b
-from scan2hwpx.clean_layout import CleanItem, build_clean_items
-from scan2hwpx.hwpx import (
-    render_clean_hwpx,
-    render_fidelity_hwpx,
-    render_semantic_hwpx,
-    validate_hwpx,
-)
-from scan2hwpx.hwpx.hancom import (
-    HancomRoundTripError,
-    render_clean_with_hancom,
-    verify_hancom_roundtrip,
-)
+from scan2hwpx.hwpx import render_fidelity_hwpx, render_semantic_hwpx, validate_hwpx
+from scan2hwpx.hwpx.hancom import HancomRoundTripError, verify_hancom_roundtrip
 from scan2hwpx.images import write_image
 from scan2hwpx.ir.models import Document
 from scan2hwpx.ocr.providers.paddle import PaddlePdfOcrProvider
@@ -29,7 +19,7 @@ from scan2hwpx.vision.formulas import FormulaProcessor
 from scan2hwpx.vision.layout_dataset import build_layout_seed_dataset
 from scan2hwpx.vision.pdf import extract_formulas as _extract_formulas
 
-RENDERERS = {"fidelity", "semantic", "editable", "portable", "hancom"}
+RENDERERS = {"fidelity", "semantic", "editable"}
 
 
 def convert_pdf(
@@ -39,7 +29,7 @@ def convert_pdf(
     progress: Callable[[str], None] | None = None,
     formula_processor: FormulaProcessor | None = None,
     ocr_provider: PaddlePdfOcrProvider | None = None,
-    renderer: str = "fidelity",
+    renderer: str = "editable",
     write_diagnostics: bool = True,
     verify_hancom: bool = False,
 ) -> dict[str, object]:
@@ -78,18 +68,18 @@ def run_ocr_stage(
     progress: Callable[[str], None] | None = None,
     formula_processor: FormulaProcessor | None = None,
     ocr_provider: PaddlePdfOcrProvider | None = None,
-    renderer: str = "fidelity",
+    renderer: str = "editable",
     write_diagnostics: bool = True,
 ) -> Document:
     """Run OCR, layout analysis, and blueprint region placement.
 
-    GPU-bound. Writes document_ir.json (and, for the semantic/editable
-    renderers, layout_training/layout_seed.json plus debug page images) to
+    GPU-bound. Writes document_ir.json, debug page images and, for the
+    semantic/editable renderers, layout_training/layout_seed.json to
     output_dir, so run_render_stage() can pick the job back up from disk in a
     separate process.
     """
     if renderer not in RENDERERS:
-        raise ValueError("renderer must be fidelity, semantic, editable, portable, or hancom")
+        raise ValueError("renderer must be fidelity, semantic, or editable")
     output_dir.mkdir(parents=True, exist_ok=True)
     logger = _configure_logger(output_dir, mode="w")
     logger.info("start input=%s dpi=%s", input_path, dpi)
@@ -107,7 +97,6 @@ def run_ocr_stage(
         formula_processor=formula_processor,
         progress=progress,
         write_diagnostics=write_diagnostics,
-        write_page_images=renderer in {"fidelity", "semantic", "editable"},
     )
     document = provider.convert(input_path, report, page_callback=page_processor.process)
     streamed = page_processor.handled_all(document.pages)
@@ -151,7 +140,7 @@ def run_render_stage(
     output_dir: Path,
     output_path: Path,
     *,
-    renderer: str = "fidelity",
+    renderer: str = "editable",
     progress: Callable[[str], None] | None = None,
     input_name: str = "",
     verify_hancom: bool = False,
@@ -163,26 +152,18 @@ def run_render_stage(
     that stage's document_ir.json.
     """
     if renderer not in RENDERERS:
-        raise ValueError("renderer must be fidelity, semantic, editable, portable, or hancom")
+        raise ValueError("renderer must be fidelity, semantic, or editable")
     input_name = input_name or output_path.name
     logger = _configure_logger(output_dir, mode="a")
 
     blocks = [block for page in document.pages for block in page.blocks]
-    clean_items: list[CleanItem] = (
-        build_clean_items(document) if renderer in {"portable", "hancom"} else []
-    )
-    if renderer in {"portable", "hancom"} and not clean_items:
-        raise RuntimeError("OCR text was found, but no printable document items could be built.")
-    clean_text_length = sum(len(item.text) for item in clean_items)
 
     if progress is not None:
         progress(f"{input_name} - writing editable HWPX")
 
     candidate = output_path.with_name(f".{output_path.stem}.candidate{output_path.suffix}")
     candidate.unlink(missing_ok=True)
-    render_engine = "hancom-template-hwpx"
     reopened = False
-    text_length = 0
     picture_controls = 0
     table_controls = 0
     editable_text_boxes = 0
@@ -209,64 +190,30 @@ def run_render_stage(
         table_controls = semantic_stats.editable_tables
         editable_text_boxes = semantic_stats.editable_text_boxes
         editable_text_characters = semantic_stats.editable_text_characters
-    elif renderer == "fidelity":
+    else:
         fidelity_stats = render_fidelity_hwpx(page_images, candidate)
         result = validate_hwpx(candidate)
         if not result.valid:
             raise RuntimeError("Fidelity HWPX validation failed: " + "; ".join(result.errors))
         render_engine = "fidelity-page-image-hwpx"
         picture_controls = fidelity_stats.pictures
-    elif renderer == "portable":
-        render_clean_hwpx(document, candidate)
-        result = validate_hwpx(candidate)
-        if not result.valid:
-            raise RuntimeError("HWPX package validation failed: " + "; ".join(result.errors))
-        text_length = clean_text_length
-    else:
-        render_engine = "hancom"
-        try:
-            render_clean_with_hancom(document, candidate)
-            result = validate_hwpx(candidate)
-            if not result.valid:
-                raise RuntimeError(
-                    "Hancom output failed package validation: " + "; ".join(result.errors)
-                )
-            text_length = clean_text_length
-        except Exception as exc:
-            logger.exception("hancom render failed; falling back to package renderer")
-            candidate.unlink(missing_ok=True)
-            render_engine = "hancom-template-hwpx"
-            if progress is not None:
-                progress(f"{input_name} - Hancom automation failed; writing fallback HWPX")
-            render_clean_hwpx(document, candidate)
-            result = validate_hwpx(candidate)
-            if not result.valid:
-                raise RuntimeError(
-                    "Fallback HWPX validation failed: " + "; ".join(result.errors)
-                ) from exc
-            text_length = clean_text_length
 
     if verify_hancom:
         if progress is not None:
             progress(f"{input_name} - verifying in Hancom")
-        # Reflowing renderers legitimately change the page count.
-        expected_pages = (
-            len(document.pages) if renderer in {"fidelity", "semantic", "editable"} else None
-        )
         try:
-            reopened = verify_hancom_roundtrip(candidate, expected_pages)
+            reopened = verify_hancom_roundtrip(candidate, len(document.pages))
         except HancomRoundTripError:
             candidate.unlink(missing_ok=True)
             raise
 
     candidate.replace(output_path)
     logger.info(
-        "done pages=%s questions=%s engine=%s reopened=%s text_length=%s",
+        "done pages=%s questions=%s engine=%s reopened=%s",
         len(document.pages),
         len(document.questions),
         render_engine,
         reopened,
-        text_length,
     )
     return {
         "pages": len(document.pages),
@@ -276,12 +223,11 @@ def run_render_stage(
         "review_required": len(document.qa.low_confidence_blocks),
         "hancom_reopened": reopened,
         "render_engine": render_engine,
-        "text_length": text_length,
         "picture_controls": picture_controls,
         "table_controls": table_controls,
         "editable_text_boxes": editable_text_boxes,
         "editable_text_characters": editable_text_characters,
-        "visual_fidelity": renderer in {"fidelity", "semantic", "editable"},
+        "visual_fidelity": True,
         "editable_layout": renderer != "fidelity",
     }
 

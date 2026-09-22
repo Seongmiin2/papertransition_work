@@ -228,29 +228,3 @@ def render_hwpx(document: Document, template: Path, output: Path) -> None:
     _replace_body(entries, paragraphs)
     _write_package(output, entries)
 
-
-def render_clean_hwpx(document: Document, output: Path) -> None:
-    """Render an editable HWPX from a sanitized Hancom-authored package template."""
-    from scan2hwpx.clean_layout import build_clean_items
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    items = build_clean_items(document)
-    paragraphs = [
-        RenderParagraph(
-            text=item.text,
-            page_break=index > 0 and item.page_no != items[index - 1].page_no,
-        )
-        for index, item in enumerate(items)
-    ]
-    if not paragraphs:
-        paragraphs = [
-            RenderParagraph(text=block.text, page_break=page_index > 0 and block_index == 0)
-            for page_index, page in enumerate(document.pages)
-            for block_index, block in enumerate(
-                sorted(page.blocks, key=lambda item: item.reading_order)
-            )
-            if block.annotation_state.value == "printed" and block.text.strip()
-        ]
-    entries = _base_entries()
-    _replace_body(entries, paragraphs)
-    _write_package(output, entries)

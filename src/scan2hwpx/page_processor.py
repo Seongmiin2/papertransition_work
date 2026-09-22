@@ -23,7 +23,6 @@ class PageProcessor:
     formula_processor: FormulaProcessor | None = None
     progress: Callable[[str], None] | None = None
     write_diagnostics: bool = True
-    write_page_images: bool = True
     processed_indexes: set[int] = field(default_factory=set, init=False)
 
     def __post_init__(self) -> None:
@@ -31,8 +30,7 @@ class PageProcessor:
         self.preprocessed_dir = self.output_dir / "debug" / "preprocessed"
         self.overlay_dir = self.output_dir / "debug" / "ocr_overlay"
         self.crop_dir = self.output_dir / "review_crops"
-        if self.write_page_images or self.write_diagnostics:
-            self.original_dir.mkdir(parents=True, exist_ok=True)
+        self.original_dir.mkdir(parents=True, exist_ok=True)
         diagnostic_dirs = (self.preprocessed_dir, self.overlay_dir, self.crop_dir)
         for directory in diagnostic_dirs if self.write_diagnostics else ():
             directory.mkdir(parents=True, exist_ok=True)
@@ -69,13 +67,10 @@ class PageProcessor:
         image_rgb: NDArray[np.uint8],
         preprocessed: PreprocessResult,
     ) -> None:
-        if not self.write_page_images and not self.write_diagnostics:
-            return
         height, width = image_rgb.shape[:2]
         original_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
         number = page.page_no
-        if self.write_page_images or self.write_diagnostics:
-            write_image(self.original_dir / f"page-{number}.png", original_bgr)
+        write_image(self.original_dir / f"page-{number}.png", original_bgr)
         if not self.write_diagnostics:
             return
         clean_bgr = cv2.cvtColor(preprocessed.image, cv2.COLOR_RGB2BGR)

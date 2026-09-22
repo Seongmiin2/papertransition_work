@@ -25,8 +25,8 @@ def _parser() -> argparse.ArgumentParser:
     convert.add_argument("--lexicon", type=Path)
     convert.add_argument(
         "--renderer",
-        choices=["fidelity", "semantic", "editable", "portable", "hancom"],
-        default="fidelity",
+        choices=["fidelity", "semantic", "editable"],
+        default="editable",
     )
     convert.add_argument("--device", default="auto", help="auto, cpu, gpu:0, ...")
     convert.add_argument("--recognition-model-dir", type=Path)
@@ -79,8 +79,8 @@ def _parser() -> argparse.ArgumentParser:
     batch.add_argument("--no-resume", action="store_true")
     batch.add_argument(
         "--renderer",
-        choices=["fidelity", "semantic", "editable", "portable", "hancom"],
-        default="fidelity",
+        choices=["fidelity", "semantic", "editable"],
+        default="editable",
     )
     batch.add_argument("--device", default="auto", help="auto, cpu, gpu:0, ...")
     batch.add_argument("--recognition-model-dir", type=Path)

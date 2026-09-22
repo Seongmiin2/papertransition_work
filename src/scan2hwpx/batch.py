@@ -28,7 +28,7 @@ def convert_directory(
     fusion_mode: str = "fast",
     lexicon_path: Path | None = None,
     resume: bool = True,
-    renderer: str = "fidelity",
+    renderer: str = "editable",
     device: str = "auto",
     recognition_model_dir: Path | None = None,
     page_anomaly_model: Path | None = None,

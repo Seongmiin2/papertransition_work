@@ -6,9 +6,11 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from PIL import Image
 
 from scan2hwpx import pipeline
 from scan2hwpx.hwpx import hancom
+from scan2hwpx.ir.models import Document
 from scan2hwpx.ocr.providers.fixture import FixtureOcrProvider
 
 
@@ -94,23 +96,30 @@ def test_roundtrip_is_skipped_when_hancom_cannot_start(
     assert hancom.verify_hancom_roundtrip(tmp_path / "result.hwpx", 1) is False
 
 
+def _document_with_page_image(tmp_path: Path) -> Document:
+    document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
+    page_image = tmp_path / "debug" / "original" / "page-1.png"
+    page_image.parent.mkdir(parents=True)
+    Image.new("RGB", (248, 351), "white").save(page_image)
+    return document
+
+
 def test_render_stage_keeps_previous_output_when_hancom_rejects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
-    document.pages[0].page_no = 2  # keep the fixture's body text printable
+    document = _document_with_page_image(tmp_path)
     output = tmp_path / "result.hwpx"
     output.write_bytes(b"previous result")
 
-    def reject(path: Path, expected_pages: int | None) -> bool:
-        assert expected_pages is None  # portable output reflows pages
+    def reject(path: Path, expected_pages: int) -> bool:
+        assert expected_pages == 1
         raise hancom.HancomRoundTripError("rejected")
 
     monkeypatch.setattr(pipeline, "verify_hancom_roundtrip", reject)
 
     with pytest.raises(hancom.HancomRoundTripError):
         pipeline.run_render_stage(
-            document, tmp_path, output, renderer="portable", verify_hancom=True
+            document, tmp_path, output, renderer="fidelity", verify_hancom=True
         )
 
     assert output.read_bytes() == b"previous result"
@@ -120,12 +129,11 @@ def test_render_stage_keeps_previous_output_when_hancom_rejects(
 def test_render_stage_reports_hancom_reopen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
-    document.pages[0].page_no = 2  # keep the fixture's body text printable
+    document = _document_with_page_image(tmp_path)
     monkeypatch.setattr(pipeline, "verify_hancom_roundtrip", lambda *_args: True)
 
     summary = pipeline.run_render_stage(
-        document, tmp_path, tmp_path / "result.hwpx", renderer="portable", verify_hancom=True
+        document, tmp_path, tmp_path / "result.hwpx", renderer="fidelity", verify_hancom=True
     )
 
     assert summary["hancom_reopened"] is True
