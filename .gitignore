@@ -25,7 +25,6 @@ debug/
 review_crops/
 *.partial
 *.log
-github_publish/
 *.lnk
 /output.hwpx
 /.claude/
