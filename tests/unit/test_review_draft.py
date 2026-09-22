@@ -988,7 +988,8 @@ def test_start_review_draft_cli_reports_only_noneligible_metadata(
     result = subprocess.run(
         [
             sys.executable,
-            "ai/datasets/start_candidate_review_draft.py",
+            "ai/datasets/candidate_review_draft.py",
+            "start",
             str(fixture.root),
             fixture.draft.document_id,
             "--reviewer-label",
@@ -1031,7 +1032,8 @@ def test_verify_review_draft_cli_reports_only_noneligible_metadata(
     result = subprocess.run(
         [
             sys.executable,
-            "ai/datasets/verify_candidate_review_draft.py",
+            "ai/datasets/candidate_review_draft.py",
+            "verify",
             str(fixture.root),
             str(draft_path),
             "--expected-manifest-sha256",
@@ -1149,7 +1151,8 @@ def test_view_cli_reverifies_candidate_and_emits_only_sanitized_json(
     result = subprocess.run(
         [
             sys.executable,
-            "ai/datasets/view_candidate_review_draft.py",
+            "ai/datasets/candidate_review_draft.py",
+            "view",
             str(fixture.root),
             str(draft_path),
             "--expected-manifest-sha256",
@@ -1185,7 +1188,8 @@ def test_view_cli_rejects_candidate_change_before_stdout(tmp_path: Path) -> None
     result = subprocess.run(
         [
             sys.executable,
-            "ai/datasets/view_candidate_review_draft.py",
+            "ai/datasets/candidate_review_draft.py",
+            "view",
             str(fixture.root),
             str(draft_path),
             "--expected-manifest-sha256",
@@ -1619,7 +1623,8 @@ def test_patch_cli_reads_strict_request_from_stdin_and_reports_metadata_only(
     result = subprocess.run(
         [
             sys.executable,
-            "ai/datasets/patch_candidate_review_draft.py",
+            "ai/datasets/candidate_review_draft.py",
+            "patch",
             str(fixture.root),
             str(draft_path),
             "--expected-manifest-sha256",
@@ -1716,7 +1721,8 @@ def test_completion_cli_reads_strict_request_and_reports_metadata_only(
     result = subprocess.run(
         [
             sys.executable,
-            "ai/datasets/complete_candidate_review_draft.py",
+            "ai/datasets/candidate_review_draft.py",
+            "complete",
             str(fixture.root),
             str(draft_path),
             "--expected-manifest-sha256",

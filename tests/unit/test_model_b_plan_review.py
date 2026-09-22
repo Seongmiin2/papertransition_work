@@ -1080,9 +1080,10 @@ def test_model_b_plan_review_cli_round_trip(tmp_path: Path) -> None:
     revision_2_path = tmp_path / "cli-r2.json"
     project_root = Path(__file__).resolve().parents[2]
 
-    def run_cli(script: str, *arguments: str, stdin: bytes | None = None) -> bytes:
+    def run_cli(command: str, *arguments: str, stdin: bytes | None = None) -> bytes:
+        script = project_root / "ai" / "datasets" / "model_b_plan_review_draft.py"
         completed = subprocess.run(
-            [sys.executable, str(project_root / "ai" / "datasets" / script), *arguments],
+            [sys.executable, str(script), command, *arguments],
             cwd=project_root,
             input=stdin,
             capture_output=True,
@@ -1093,7 +1094,7 @@ def test_model_b_plan_review_cli_round_trip(tmp_path: Path) -> None:
 
     start_payload = json.loads(
         run_cli(
-            "start_model_b_plan_review_draft.py",
+            "start",
             str(content_path),
             str(plan_path),
             str(grounding_path),
@@ -1110,7 +1111,7 @@ def test_model_b_plan_review_cli_round_trip(tmp_path: Path) -> None:
 
     verified_payload = json.loads(
         run_cli(
-            "verify_model_b_plan_review_draft.py",
+            "verify",
             str(revision_1_path),
             str(content_path),
             str(plan_path),
@@ -1123,7 +1124,7 @@ def test_model_b_plan_review_cli_round_trip(tmp_path: Path) -> None:
 
     view_payload = json.loads(
         run_cli(
-            "view_model_b_plan_review_draft.py",
+            "view",
             str(revision_1_path),
             str(content_path),
             str(plan_path),
@@ -1153,7 +1154,7 @@ def test_model_b_plan_review_cli_round_trip(tmp_path: Path) -> None:
     )
     patch_payload = json.loads(
         run_cli(
-            "patch_model_b_plan_review_draft.py",
+            "patch",
             str(revision_1_path),
             str(content_path),
             str(plan_path),
@@ -1495,8 +1496,9 @@ def test_model_b_completion_cli_uses_bounded_request_and_keeps_noneligible(
                 project_root
                 / "ai"
                 / "datasets"
-                / "complete_model_b_plan_review_draft.py"
+                / "model_b_plan_review_draft.py"
             ),
+            "complete",
             str(revision_1_path),
             str(content_path),
             str(plan_path),

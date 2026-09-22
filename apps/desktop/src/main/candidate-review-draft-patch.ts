@@ -304,6 +304,7 @@ export async function applyCandidateReviewDraftPatch(
             executable,
             args: [
               patchScript,
+              "patch",
               context.candidateRoot,
               current.path,
               "--expected-manifest-sha256",
@@ -374,6 +375,7 @@ export async function completeCandidateReviewDraft(
             executable,
             args: [
               completionScript,
+              "complete",
               context.candidateRoot,
               current.path,
               "--expected-manifest-sha256",
@@ -446,6 +448,7 @@ async function executeView(
       executable,
       args: [
         context.viewScript,
+        "view",
         context.candidateRoot,
         draftPath,
         "--expected-manifest-sha256",
@@ -541,23 +544,11 @@ function prepareContext(
   ) {
     throw new Error(STORAGE_FAILED_MESSAGE);
   }
-  const defaultPatchScript = join(
+  const defaultScript = join(
     projectRoot,
     "ai",
     "datasets",
-    "patch_candidate_review_draft.py",
-  );
-  const defaultViewScript = join(
-    projectRoot,
-    "ai",
-    "datasets",
-    "view_candidate_review_draft.py",
-  );
-  const defaultCompletionScript = join(
-    projectRoot,
-    "ai",
-    "datasets",
-    "complete_candidate_review_draft.py",
+    "candidate_review_draft.py",
   );
   return {
     projectRoot,
@@ -568,18 +559,18 @@ function prepareContext(
     lineageId,
     patchScript: requirePatchScript
       ? requiredRegularFile(
-          options.patchScript ?? defaultPatchScript,
+          options.patchScript ?? defaultScript,
           SERVICE_FAILED_MESSAGE,
         )
       : null,
     completionScript: requireCompletionScript
       ? requiredRegularFile(
-          options.completionScript ?? defaultCompletionScript,
+          options.completionScript ?? defaultScript,
           SERVICE_FAILED_MESSAGE,
         )
       : null,
     viewScript: requiredRegularFile(
-      options.viewScript ?? defaultViewScript,
+      options.viewScript ?? defaultScript,
       SERVICE_FAILED_MESSAGE,
     ),
     commandRunner: options.commandRunner ?? runBridgeCommand,

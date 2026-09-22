@@ -204,7 +204,7 @@ Golden Dataset에 넣으려면 별도의 인증된 사람 검수 증명과 독�
 Create revision 1 outside the candidate bundle:
 
 ```powershell
-python ai/datasets/start_candidate_review_draft.py `
+python ai/datasets/candidate_review_draft.py start `
   output/hwpx-projection-candidates-20260910-v4 candidate-id `
   --reviewer-label reviewer-local `
   --expected-manifest-sha256 $manifestSha256 `
@@ -216,7 +216,7 @@ Apply a typed patch from stdin to a new path; the prior revision is never overwr
 
 ```powershell
 '{"expected_draft_revision":1,"operations":[{"op":"set_needs_review","node_id":"text-1","needs_review":false}]}' | `
-  python ai/datasets/patch_candidate_review_draft.py `
+  python ai/datasets/candidate_review_draft.py patch `
   output/hwpx-projection-candidates-20260910-v4 output/reviews/candidate-id.r1.json `
   --expected-manifest-sha256 $manifestSha256 `
   --expected-lineage-id $lineageId `
@@ -229,7 +229,7 @@ or any ContentIR node still has `needs_review=true`.
 
 ```powershell
 '{"schema_version":"candidate-review-completion/1.0","expected_draft_revision":2}' | `
-  python ai/datasets/complete_candidate_review_draft.py `
+  python ai/datasets/candidate_review_draft.py complete `
   output/hwpx-projection-candidates-20260910-v4 output/reviews/candidate-id.r2.json `
   --expected-manifest-sha256 $manifestSha256 `
   --expected-lineage-id $lineageId `
@@ -239,10 +239,10 @@ or any ContentIR node still has `needs_review=true`.
 Reopen through the sanitized Electron view, or run a metadata-only verification:
 
 ```powershell
-python ai/datasets/view_candidate_review_draft.py `
+python ai/datasets/candidate_review_draft.py view `
   output/hwpx-projection-candidates-20260910-v4 output/reviews/candidate-id.r3.complete.json `
   --expected-manifest-sha256 $manifestSha256 --expected-lineage-id $lineageId
-python ai/datasets/verify_candidate_review_draft.py `
+python ai/datasets/candidate_review_draft.py verify `
   output/hwpx-projection-candidates-20260910-v4 output/reviews/candidate-id.r3.complete.json `
   --expected-manifest-sha256 $manifestSha256 --expected-lineage-id $lineageId
 ```

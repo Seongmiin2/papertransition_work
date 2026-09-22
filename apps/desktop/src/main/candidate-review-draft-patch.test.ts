@@ -41,7 +41,7 @@ describe("candidate review draft patch bridge", () => {
     const runtimeSelector = vi.fn(async () => "python-test");
     const runner: CandidateReviewDraftBridgeCommandRunner = vi.fn(async (command) => {
       commands.push(command);
-      if (command.args[0] === fixture.patchScript) {
+      if (command.args[1] === "patch") {
         const destination = command.args[command.args.indexOf("--out") + 1];
         writeFileSync(destination, "immutable revision 2", "utf8");
         return commandResult(patchSummary(2));
@@ -89,7 +89,8 @@ describe("candidate review draft patch bridge", () => {
     expect(commands).toHaveLength(2);
     const [patchCommand, viewCommand] = commands;
     expect(patchCommand.args).toEqual([
-      fixture.patchScript,
+      fixture.script,
+      "patch",
       fixture.candidateRoot,
       fixture.draftPath,
       "--expected-manifest-sha256",
@@ -131,7 +132,8 @@ describe("candidate review draft patch bridge", () => {
       ],
     });
     expect(viewCommand.args).toEqual([
-      fixture.viewScript,
+      fixture.script,
+      "view",
       fixture.candidateRoot,
       fixture.revisionPath(2),
       "--expected-manifest-sha256",
@@ -171,7 +173,7 @@ describe("candidate review draft patch bridge", () => {
     const commands: CandidateReviewDraftBridgeCommand[] = [];
     const runner: CandidateReviewDraftBridgeCommandRunner = vi.fn(async (command) => {
       commands.push(command);
-      if (command.args[0] === fixture.completionScript) {
+      if (command.args[1] === "complete") {
         const destination = command.args[command.args.indexOf("--out") + 1];
         writeFileSync(destination, "immutable complete revision 2", "utf8");
         return commandResult(completionSummary(2));
@@ -188,7 +190,8 @@ describe("candidate review draft patch bridge", () => {
 
     expect(commands).toHaveLength(2);
     expect(commands[0].args).toEqual([
-      fixture.completionScript,
+      fixture.script,
+      "complete",
       fixture.candidateRoot,
       fixture.draftPath,
       "--expected-manifest-sha256",
@@ -203,7 +206,8 @@ describe("candidate review draft patch bridge", () => {
       expected_draft_revision: 1,
     });
     expect(commands[1].args).toEqual([
-      fixture.viewScript,
+      fixture.script,
+      "view",
       fixture.candidateRoot,
       fixture.revisionPath(2),
       "--expected-manifest-sha256",
@@ -229,7 +233,7 @@ describe("candidate review draft patch bridge", () => {
   it("maps a completion atomic-create loss to the stale recovery path", async () => {
     const fixture = makeFixture();
     const runner: CandidateReviewDraftBridgeCommandRunner = vi.fn(async (command) => {
-      if (command.args[0] === fixture.completionScript) {
+      if (command.args[1] === "complete") {
         writeFileSync(fixture.revisionPath(2), "other process revision", "utf8");
         return { code: 1, stdout: "", stderr: "destination already exists" };
       }
@@ -263,17 +267,17 @@ describe("candidate review draft patch bridge", () => {
     const commands: CandidateReviewDraftBridgeCommand[] = [];
     const runner: CandidateReviewDraftBridgeCommandRunner = vi.fn(async (command) => {
       commands.push(command);
-      if (command.args[0] === fixture.patchScript) {
+      if (command.args[1] === "patch") {
         markPatchEntered();
         await patchGate;
         writeFileSync(fixture.revisionPath(2), "immutable revision 2", "utf8");
         return commandResult(patchSummary(2));
       }
-      if (command.args[0] === fixture.completionScript) {
+      if (command.args[1] === "complete") {
         writeFileSync(fixture.revisionPath(3), "immutable complete revision 3", "utf8");
         return commandResult(completionSummary(3));
       }
-      const isComplete = command.args[2] === fixture.revisionPath(3);
+      const isComplete = command.args[3] === fixture.revisionPath(3);
       return commandResult(reviewView(isComplete ? 3 : 2, isComplete ? "complete" : "in_progress"));
     });
     const sharedOptions = {
@@ -301,11 +305,11 @@ describe("candidate review draft patch bridge", () => {
     ]);
     expect(patched).toMatchObject({ status: "in_progress", draftRevision: 2 });
     expect(completed).toMatchObject({ status: "complete", draftRevision: 3 });
-    expect(commands.map((command) => command.args[0])).toEqual([
-      fixture.patchScript,
-      fixture.viewScript,
-      fixture.completionScript,
-      fixture.viewScript,
+    expect(commands.map((command) => command.args[1])).toEqual([
+      "patch",
+      "view",
+      "complete",
+      "view",
     ]);
   });
 
@@ -329,7 +333,8 @@ describe("candidate review draft patch bridge", () => {
     expect(view.draftRevision).toBe(10);
     expect(commands).toHaveLength(1);
     expect(commands[0].args).toEqual([
-      fixture.viewScript,
+      fixture.script,
+      "view",
       fixture.candidateRoot,
       fixture.revisionPath(10),
       "--expected-manifest-sha256",
@@ -376,7 +381,7 @@ describe("candidate review draft patch bridge", () => {
   it("maps a cross-process atomic-create loss to the stale recovery path", async () => {
     const fixture = makeFixture();
     const runner: CandidateReviewDraftBridgeCommandRunner = vi.fn(async (command) => {
-      if (command.args[0] === fixture.patchScript) {
+      if (command.args[1] === "patch") {
         writeFileSync(fixture.revisionPath(2), "other process revision", "utf8");
         return { code: 1, stdout: "", stderr: "destination already exists" };
       }
@@ -415,13 +420,13 @@ describe("candidate review draft patch bridge", () => {
       activeCommands += 1;
       maximumActiveCommands = Math.max(maximumActiveCommands, activeCommands);
       try {
-        if (command.args[0] === fixture.patchScript) {
+        if (command.args[1] === "patch") {
           markPatchEntered();
           await patchGate;
           writeFileSync(fixture.revisionPath(2), "immutable revision 2", "utf8");
           return commandResult(patchSummary(2));
         }
-        const revision = command.args[2] === fixture.draftPath ? 1 : 2;
+        const revision = command.args[3] === fixture.draftPath ? 1 : 2;
         return commandResult(reviewView(revision));
       } finally {
         activeCommands -= 1;
@@ -449,10 +454,10 @@ describe("candidate review draft patch bridge", () => {
     const [patched, loaded] = await Promise.all([patchPromise, loadPromise]);
     expect(patched.draftRevision).toBe(2);
     expect(loaded.draftRevision).toBe(2);
-    expect(commands.map((command) => command.args[0])).toEqual([
-      fixture.patchScript,
-      fixture.viewScript,
-      fixture.viewScript,
+    expect(commands.map((command) => command.args[1])).toEqual([
+      "patch",
+      "view",
+      "view",
     ]);
     expect(maximumActiveCommands).toBe(1);
   });
@@ -470,7 +475,7 @@ describe("candidate review draft patch bridge", () => {
     const commands: CandidateReviewDraftBridgeCommand[] = [];
     const runner: CandidateReviewDraftBridgeCommandRunner = vi.fn(async (command) => {
       commands.push(command);
-      if (command.args[0] === fixture.patchScript) {
+      if (command.args[1] === "patch") {
         markPatchEntered();
         await patchGate;
         writeFileSync(fixture.revisionPath(2), "immutable revision 2", "utf8");
@@ -497,9 +502,9 @@ describe("candidate review draft patch bridge", () => {
     await expect(second).rejects.toThrow(
       "Review draft revision is stale. Reopen it and retry.",
     );
-    expect(commands.map((command) => command.args[0])).toEqual([
-      fixture.patchScript,
-      fixture.viewScript,
+    expect(commands.map((command) => command.args[1])).toEqual([
+      "patch",
+      "view",
     ]);
     expect(existsSync(fixture.revisionPath(3))).toBe(false);
   });
@@ -638,7 +643,7 @@ describe("candidate review draft patch bridge", () => {
     const fixture = makeFixture();
     const runner: CandidateReviewDraftBridgeCommandRunner = vi.fn(
       async (command) => {
-        if (command.args[0] === fixture.patchScript) {
+        if (command.args[1] === "patch") {
           const destination = command.args[command.args.indexOf("--out") + 1];
           writeFileSync(destination, "immutable revision 2", "utf8");
           return commandResult({
@@ -678,13 +683,9 @@ function makeFixture() {
   mkdirSync(scripts, { recursive: true });
   mkdirSync(candidateRoot);
   mkdirSync(draftDirectory, { recursive: true });
-  const patchScript = join(scripts, "patch_candidate_review_draft.py");
-  const completionScript = join(scripts, "complete_candidate_review_draft.py");
-  const viewScript = join(scripts, "view_candidate_review_draft.py");
+  const script = join(scripts, "candidate_review_draft.py");
   const draftPath = join(draftDirectory, "draft.json");
-  writeFileSync(patchScript, "# patch fixture", "utf8");
-  writeFileSync(completionScript, "# completion fixture", "utf8");
-  writeFileSync(viewScript, "# view fixture", "utf8");
+  writeFileSync(script, "# fixture", "utf8");
   writeFileSync(draftPath, "immutable revision 1", "utf8");
 
   const canonicalProjectRoot = realpathSync.native(projectRoot);
@@ -696,9 +697,7 @@ function makeFixture() {
     candidateRoot: canonicalCandidateRoot,
     userDataRoot: canonicalUserDataRoot,
     draftPath: realpathSync.native(draftPath),
-    patchScript: realpathSync.native(patchScript),
-    completionScript: realpathSync.native(completionScript),
-    viewScript: realpathSync.native(viewScript),
+    script: realpathSync.native(script),
     revisionPath: (revision: number) =>
       join(canonicalDraftDirectory, `draft.r${revision}.json`),
     bridgeOptions: {

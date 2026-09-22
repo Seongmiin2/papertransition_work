@@ -104,22 +104,16 @@ export async function startOrReopenCandidateReviewDraft(
       const stored = existing
         ? latestStoredCandidateReviewDraft(dirname(destination))
         : { revision: 1, path: destination };
-      const defaultStartScript = join(
+      const defaultScript = join(
         projectRoot,
         "ai",
         "datasets",
-        "start_candidate_review_draft.py",
-      );
-      const defaultVerifyScript = join(
-        projectRoot,
-        "ai",
-        "datasets",
-        "verify_candidate_review_draft.py",
+        "candidate_review_draft.py",
       );
       const script = requiredRegularFile(
         operation === "created"
-          ? options.startScript ?? defaultStartScript
-          : options.verifyScript ?? defaultVerifyScript,
+          ? options.startScript ?? defaultScript
+          : options.verifyScript ?? defaultScript,
         operation === "created"
           ? "review draft start CLI"
           : "review draft verify CLI",
@@ -134,6 +128,7 @@ export async function startOrReopenCandidateReviewDraft(
         operation === "created"
           ? [
               script,
+              "start",
               candidateRoot,
               documentId,
               "--reviewer-label",
@@ -147,6 +142,7 @@ export async function startOrReopenCandidateReviewDraft(
             ]
           : [
               script,
+              "verify",
               candidateRoot,
               stored.path,
               "--expected-manifest-sha256",

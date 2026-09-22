@@ -37,6 +37,7 @@ describe("candidate review draft bridge", () => {
     const runner: CandidateReviewDraftCommandRunner = vi.fn(async (command) => {
       expect(command.shell).toBe(false);
       expect(command.windowsHide).toBe(true);
+      expect(command.args[1]).toBe("start");
       expect(command.args).toContain("--reviewer-label");
       expect(command.args).toContain("--expected-manifest-sha256");
       expect(command.args).toContain(manifestSha256);
@@ -92,6 +93,7 @@ describe("candidate review draft bridge", () => {
       );
       expect(command.args).toEqual([
         realpathSync.native(fixture.verifyScript),
+        "verify",
         realpathSync.native(fixture.candidateRoot),
         canonicalDestination,
         "--expected-manifest-sha256",
@@ -128,7 +130,7 @@ describe("candidate review draft bridge", () => {
     writeFileSync(join(directory, "draft.json"), "revision one", "utf8");
     writeFileSync(join(directory, "draft.r2.json"), "revision two", "utf8");
     const runner: CandidateReviewDraftCommandRunner = vi.fn(async (command) => {
-      expect(command.args[2]).toBe(
+      expect(command.args[3]).toBe(
         realpathSync.native(join(directory, "draft.r2.json")),
       );
       return { code: 0, stderr: "", stdout: verifySummary(2) };
@@ -264,17 +266,15 @@ function makeFixture() {
   mkdirSync(scripts, { recursive: true });
   mkdirSync(candidateRoot);
   mkdirSync(userDataRoot);
-  const startScript = join(scripts, "start_candidate_review_draft.py");
-  const verifyScript = join(scripts, "verify_candidate_review_draft.py");
-  writeFileSync(startScript, "# fixture", "utf8");
-  writeFileSync(verifyScript, "# fixture", "utf8");
+  const script = join(scripts, "candidate_review_draft.py");
+  writeFileSync(script, "# fixture", "utf8");
   const pythonRuntimeSelector = async () => "python-test";
   return {
     projectRoot,
     candidateRoot,
     userDataRoot,
-    startScript,
-    verifyScript,
+    startScript: script,
+    verifyScript: script,
     pythonRuntimeSelector,
   };
 }
