@@ -33,6 +33,7 @@ import {
   selectPythonRuntime,
 } from "./python-runtime.js";
 import { JobDatabase } from "./database.js";
+import { progressFromMessage, stagesBetween, type ConversionStage } from "./progress.js";
 import type { JobRecord } from "../types/contracts.js";
 
 let window: BrowserWindowType | null = null;
@@ -94,15 +95,10 @@ async function sha256(path: string): Promise<string> {
 
 function publish(job: JobRecord): JobRecord { window?.webContents.send("jobs:event", job); return job; }
 
-function progressFromMessage(message: string): { progress: number; pageCount: number | null } {
-  const page = /page\s+(\d+)\/(\d+)/i.exec(message);
-  if (page) {
-    const current = Number(page[1]);
-    const total = Number(page[2]);
-    return { progress: Math.min(0.84, 0.1 + (current / total) * 0.74), pageCount: total };
+function advance(id: string, target: ConversionStage, patch: Partial<JobRecord> = {}): void {
+  for (const stage of stagesBetween(database.get(id).status, target)) {
+    publish(database.transition(id, stage, stage === target ? patch : {}));
   }
-  if (message.includes("writing editable HWPX")) return { progress: 0.84, pageCount: null };
-  return { progress: 0.1, pageCount: null };
 }
 
 function terminateWorker(child: ChildProcessWithoutNullStreams): void {
@@ -161,13 +157,14 @@ function consumeWorkerOutput(data: Buffer): void {
     if (isTerminal(database.get(id).status)) continue;
     if (event.event === "progress") {
       const next = progressFromMessage(String(event.data.message ?? ""));
-      publish(database.setProgress(id, next.progress, next.pageCount));
+      if (next) {
+        advance(id, next.stage);
+        const progress = Math.max(database.get(id).progress, next.progress);
+        publish(database.setProgress(id, progress, next.pageCount));
+      }
     }
     if (event.event === "completed") {
-      publish(database.transition(id, "STRUCTURING", { progress: 0.86 }));
-      publish(database.transition(id, "EXPORTING", { progress: 0.92 }));
-      publish(database.transition(id, "VALIDATING", { progress: 0.97 }));
-      publish(database.transition(id, "COMPLETED", { progress: 1, outputPath: String(event.data.output_path) }));
+      advance(id, "COMPLETED", { progress: 1, outputPath: String(event.data.output_path) });
       finishActiveJob(id);
     }
     if (event.event === "failed") {
