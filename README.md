@@ -117,14 +117,15 @@ npm run build
 
 ```powershell
 npm run build
-node scripts/smoke-candidate-review.mjs output/hwpx-projection-candidates-20260910-v4
+node scripts/smoke-candidate-review.mjs output/review/hwpx-projection-candidates-20260910-v4
 ```
 
 ## 주요 문서
 
 - [구속력 있는 모델 우선 아키텍처](docs/architecture/0001-model-first-document-factory.md)
 - [AI 실험과 제품 승격 흐름](ai/README.md)
-- [모델 성과 추이](ai/results/README.md)
+- [결과값: 변환 품질·모델 성능](ai/results/README.md)
+- [데이터 목록](ai/datasets/INVENTORY.md)
 - [프로덕션 모델 정책](ai/production/README.md)
 - [개발 현황 보고서](docs/DEVELOPMENT_REPORT.md)
 - [폴더 구조](STRUCTURE.md)

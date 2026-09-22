@@ -7,3 +7,5 @@
 - `references/`: 스캔 원본, transcript, 편집 구조 참조
 
 새 PC에서는 권한이 확인된 원본을 같은 상대경로에 복원한 뒤 데이터셋 생성기를 실행한다.
+
+파일별 목록과 교과서·학교 구성은 [`../INVENTORY.md`](../INVENTORY.md)에 있다.
