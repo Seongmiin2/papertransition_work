@@ -108,7 +108,7 @@ def main() -> int:
     parser.add_argument(
         "--dataset-report",
         type=Path,
-        default=Path("output/hwp-ocr-training-v2/dataset_report.json"),
+        default=Path("output/datasets/hwp-ocr-training-v2/dataset_report.json"),
     )
     parser.add_argument("--source", type=Path, default=Path("ai/datasets/source"))
     parser.add_argument("--out", type=Path, required=True)

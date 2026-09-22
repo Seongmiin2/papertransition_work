@@ -3,9 +3,9 @@
 이 디렉터리는 문서 설계 모델(Model B)이 참조할 한컴 공식 자료의 출처와 사용 계약을
 관리한다. 공식 문서는 OCR 인식 모델이나 문서 분석 모델(Model A)의 학습 데이터가 아니다.
 
-원본 PDF, HTML, 공식 저장소 ZIP은 `output/hancom-knowledge/raw/`에 저장되며 Git에 넣지
+원본 PDF, HTML, 공식 저장소 ZIP은 `output/datasets/hancom-knowledge/raw/`에 저장되며 Git에 넣지
 않는다. `sources.json`은 다운로드 URL, 고정 revision, 파일 크기, SHA-256, 라이선스 주의사항을
-기록한다. 추출한 검색 코퍼스도 `output/hancom-knowledge/processed/`에 생성한다.
+기록한다. 추출한 검색 코퍼스도 `output/datasets/hancom-knowledge/processed/`에 생성한다.
 
 검증과 코퍼스 생성을 다시 실행하는 명령은 다음과 같다.
 

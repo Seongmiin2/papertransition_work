@@ -15,10 +15,10 @@ source/
 
 ## OCR line dataset 생성
 
-기본 입력은 `source/고2/`, 기본 출력은 `output/hwp-ocr-training/`이다.
+기본 입력은 `source/고2/`, 기본 출력은 `output/datasets/hwp-ocr-training/`이다.
 
 ```powershell
-python ai/datasets/build_hwp_line_dataset.py --input ai/datasets/source/고1-2 --input ai/datasets/source/고2 --output output/hwp-ocr-training-v2
+python ai/datasets/build_hwp_line_dataset.py --input ai/datasets/source/고1-2 --input ai/datasets/source/고2 --output output/datasets/hwp-ocr-training-v2
 ```
 
 생성 결과에는 train/validation/test 라벨, 이미지 crop, 문자 사전, `dataset_report.json`이 포함된다.
@@ -33,7 +33,7 @@ validation/test가 비더라도 기존 문서를 강제로 옮겨 채우지 않�
 python ai/datasets/build_hwp_line_dataset.py `
   --input ai/datasets/source/고1-2 `
   --input ai/datasets/source/고2 `
-  --output output/hwp-ocr-training-v3 `
+  --output output/datasets/hwp-ocr-training-v3 `
   --split-manifest ai/datasets/configs/ocr_split_map.json
 ```
 
@@ -47,9 +47,9 @@ so it documents the schema but can never authorize training.
 
 ```powershell
 python ai/datasets/prepare_ocr_training_rights_worklist.py `
-  --pair-manifest output/hwp-hwpx-pairs-20260909/manifest.json `
+  --pair-manifest output/datasets/hwp-hwpx-pairs-20260909/manifest.json `
   --source-root ai/datasets/source `
-  --out output/ocr-training-rights-worklist-20260910.json
+  --out output/datasets/ocr-training-rights-worklist-20260910.json
 ```
 
 생성기는 각 상대 `source_ref`의 실제 SHA-256을 확인하며, unsafe 경로·symlink·누락·변조와
@@ -100,10 +100,10 @@ OCR line-risk 데이터 생성에도 원본 OCR 데이터셋을 만든 실제 `-
 
 ```powershell
 python ai/datasets/build_model_a_line_risk_dataset.py `
-  --dataset output/hwp-ocr-training-v2 `
+  --dataset output/datasets/hwp-ocr-training-v2 `
   --rights-manifest path/to/verified-ocr-training-rights.json `
   --model ai/production/deployed/korean-exam-ppocrv5 `
-  --out output/model-a-line-risk-dataset-<run-id> `
+  --out output/datasets/model-a-line-risk-dataset-<run-id> `
   --device gpu:0
 ```
 
@@ -118,7 +118,7 @@ python ai/datasets/build_model_a_line_risk_dataset.py `
 ```powershell
 python ai/datasets/bootstrap_model_a_candidates.py `
   output/run-a/document_ir.json output/run-b/document_ir.json `
-  --output output/model-a-annotation-candidates `
+  --output output/datasets/model-a-annotation-candidates `
   --max-workers 4
 ```
 
@@ -131,12 +131,12 @@ python ai/datasets/bootstrap_model_a_candidates.py `
 
 ```powershell
 python ai/datasets/build_hwpx_projection_candidates.py `
-  --pairs output/hwp-hwpx-pairs-20260909 `
-  --out output/hwpx-projection-candidates-20260910-v4 `
+  --pairs output/datasets/hwp-hwpx-pairs-20260909 `
+  --out output/review/hwpx-projection-candidates-20260910-v4 `
   --max-workers 4 `
   --dpi 300 `
   --capability-profile ai/knowledge/hancom/capability_profile.json `
-  --knowledge-corpus output/hancom-knowledge/processed/chunks.jsonl
+  --knowledge-corpus output/datasets/hancom-knowledge/processed/chunks.jsonl
 ```
 
 HWPX는 목표 문서의 구조·스타일을 검수하기 위한 target-side sidecar에만 사용한다.
@@ -162,10 +162,10 @@ create-only bundle로 만든다.
 
 ```powershell
 python ai/datasets/build_model_b_grounding_sidecars.py `
-  --candidates output/hwpx-projection-candidates-20260910-v4 `
-  --knowledge-corpus output/hancom-knowledge/processed/chunks.jsonl `
+  --candidates output/review/hwpx-projection-candidates-20260910-v4 `
+  --knowledge-corpus output/datasets/hancom-knowledge/processed/chunks.jsonl `
   --capability-profile ai/knowledge/hancom/capability_profile.json `
-  --out output/model-b-grounding-sidecars-20260910-v4 `
+  --out output/review/model-b-grounding-sidecars-20260910-v4 `
   --max-workers 4
 ```
 
@@ -188,7 +188,7 @@ from scan2hwpx.evaluation.review_draft import (
 draft = load_candidate_review_draft("review-draft.json")
 verify_candidate_review_draft(
     draft,
-    candidate_root="output/hwpx-projection-candidates-20260910-v4",
+    candidate_root="output/review/hwpx-projection-candidates-20260910-v4",
 )
 ```
 
@@ -205,11 +205,11 @@ Create revision 1 outside the candidate bundle:
 
 ```powershell
 python ai/datasets/candidate_review_draft.py start `
-  output/hwpx-projection-candidates-20260910-v4 candidate-id `
+  output/review/hwpx-projection-candidates-20260910-v4 candidate-id `
   --reviewer-label reviewer-local `
   --expected-manifest-sha256 $manifestSha256 `
   --expected-lineage-id $lineageId `
-  --out output/reviews/candidate-id.r1.json
+  --out output/review/reviews/candidate-id.r1.json
 ```
 
 Apply a typed patch from stdin to a new path; the prior revision is never overwritten:
@@ -217,10 +217,10 @@ Apply a typed patch from stdin to a new path; the prior revision is never overwr
 ```powershell
 '{"expected_draft_revision":1,"operations":[{"op":"set_needs_review","node_id":"text-1","needs_review":false}]}' | `
   python ai/datasets/candidate_review_draft.py patch `
-  output/hwpx-projection-candidates-20260910-v4 output/reviews/candidate-id.r1.json `
+  output/review/hwpx-projection-candidates-20260910-v4 output/review/reviews/candidate-id.r1.json `
   --expected-manifest-sha256 $manifestSha256 `
   --expected-lineage-id $lineageId `
-  --out output/reviews/candidate-id.r2.json
+  --out output/review/reviews/candidate-id.r2.json
 ```
 
 Complete an exact ready revision into another immutable file. Completion changes only
@@ -230,20 +230,20 @@ or any ContentIR node still has `needs_review=true`.
 ```powershell
 '{"schema_version":"candidate-review-completion/1.0","expected_draft_revision":2}' | `
   python ai/datasets/candidate_review_draft.py complete `
-  output/hwpx-projection-candidates-20260910-v4 output/reviews/candidate-id.r2.json `
+  output/review/hwpx-projection-candidates-20260910-v4 output/review/reviews/candidate-id.r2.json `
   --expected-manifest-sha256 $manifestSha256 `
   --expected-lineage-id $lineageId `
-  --out output/reviews/candidate-id.r3.complete.json
+  --out output/review/reviews/candidate-id.r3.complete.json
 ```
 
 Reopen through the sanitized Electron view, or run a metadata-only verification:
 
 ```powershell
 python ai/datasets/candidate_review_draft.py view `
-  output/hwpx-projection-candidates-20260910-v4 output/reviews/candidate-id.r3.complete.json `
+  output/review/hwpx-projection-candidates-20260910-v4 output/review/reviews/candidate-id.r3.complete.json `
   --expected-manifest-sha256 $manifestSha256 --expected-lineage-id $lineageId
 python ai/datasets/candidate_review_draft.py verify `
-  output/hwpx-projection-candidates-20260910-v4 output/reviews/candidate-id.r3.complete.json `
+  output/review/hwpx-projection-candidates-20260910-v4 output/review/reviews/candidate-id.r3.complete.json `
   --expected-manifest-sha256 $manifestSha256 --expected-lineage-id $lineageId
 ```
 
@@ -259,10 +259,10 @@ Model B는 base 후보가 아니라 완료된 사람 검수 revision의 reviewed
 
 ```powershell
 python ai/datasets/start_candidate_to_model_b_handoff.py `
-  output/hwpx-projection-candidates-20260910-v4 `
-  output/reviews/$documentId.r3.complete.json `
-  output/model-b-grounding-sidecars-20260910-v4 `
-  output/hancom-knowledge/processed/chunks.jsonl `
+  output/review/hwpx-projection-candidates-20260910-v4 `
+  output/review/reviews/$documentId.r3.complete.json `
+  output/review/model-b-grounding-sidecars-20260910-v4 `
+  output/datasets/hancom-knowledge/processed/chunks.jsonl `
   ai/knowledge/hancom/capability_profile.json `
   --reviewer-label reviewer-local `
   --expected-review-sha256 $reviewSha256 `

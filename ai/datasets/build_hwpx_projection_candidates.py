@@ -192,7 +192,7 @@ def main() -> int:
     parser.add_argument(
         "--knowledge-corpus",
         type=Path,
-        default=Path("output/hancom-knowledge/processed/chunks.jsonl"),
+        default=Path("output/datasets/hancom-knowledge/processed/chunks.jsonl"),
     )
     args = parser.parse_args()
 

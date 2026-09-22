@@ -45,7 +45,7 @@ _MAX_DATASET_IMAGE_BYTES = 64 * 1024 * 1024
 def main(*, attestor_context: AuthenticatedAttestorContext | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fine-tune PP-OCRv5 for Korean exam sheets")
     parser.add_argument("--paddleocr-repo", type=Path, required=True)
-    parser.add_argument("--dataset", type=Path, default=Path("output/ocr-training"))
+    parser.add_argument("--dataset", type=Path, default=Path("output/datasets/ocr-training"))
     parser.add_argument(
         "--rights-manifest",
         type=Path,
@@ -58,7 +58,7 @@ def main(*, attestor_context: AuthenticatedAttestorContext | None = None) -> int
         required=True,
         help="Workspace root containing the attestation evidence artifact:// paths",
     )
-    parser.add_argument("--output", type=Path, default=Path("output/trained-korean-ocr"))
+    parser.add_argument("--output", type=Path, default=Path("output/training/trained-korean-ocr"))
     parser.add_argument(
         "--pretrained",
         type=Path,

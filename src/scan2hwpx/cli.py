@@ -41,7 +41,7 @@ def _parser() -> argparse.ArgumentParser:
     audit.add_argument("--split-out", type=Path)
     benchmark = commands.add_parser("formula-benchmark")
     benchmark.add_argument("input", type=Path)
-    benchmark.add_argument("--out", type=Path, default=Path("output/formula-benchmark"))
+    benchmark.add_argument("--out", type=Path, default=Path("output/benchmarks/formula-benchmark"))
     benchmark.add_argument(
         "--models",
         nargs="+",
@@ -55,13 +55,13 @@ def _parser() -> argparse.ArgumentParser:
         help="HWP output examples and PDF inputs are inventoried into a training-ready corpus",
     )
     reference.add_argument("input", type=Path)
-    reference.add_argument("--out", type=Path, default=Path("output/reference-dataset"))
+    reference.add_argument("--out", type=Path, default=Path("output/datasets/reference-dataset"))
     synthetic = commands.add_parser(
         "build-ocr-dataset",
         help="Render HWP reference text into PaddleOCR recognition training crops",
     )
     synthetic.add_argument("manifest", type=Path)
-    synthetic.add_argument("--out", type=Path, default=Path("output/ocr-training"))
+    synthetic.add_argument("--out", type=Path, default=Path("output/datasets/ocr-training"))
     synthetic.add_argument("--variants", type=int, default=1)
     synthetic.add_argument("--limit", type=int, default=5000)
     synthetic.add_argument("--font", action="append", type=Path, dest="fonts")
@@ -90,7 +90,7 @@ def _parser() -> argparse.ArgumentParser:
         help="Validate reviewer-confirmed OCR JSONL and copy crops into document-level splits",
     )
     verified.add_argument("manifest", type=Path)
-    verified.add_argument("--out", type=Path, default=Path("output/verified-ocr-training"))
+    verified.add_argument("--out", type=Path, default=Path("output/datasets/verified-ocr-training"))
     layout_dataset = commands.add_parser(
         "build-layout-dataset",
         help="Create PP-DocLayout and ruled-line seed labels for human review",
@@ -159,7 +159,7 @@ def _parser() -> argparse.ArgumentParser:
 def _default_lexicon(value: Path | None) -> Path | None:
     if value is not None:
         return value
-    candidate = Path("output/ocr-training/lexicon.json")
+    candidate = Path("output/datasets/ocr-training/lexicon.json")
     return candidate if candidate.is_file() else None
 
 

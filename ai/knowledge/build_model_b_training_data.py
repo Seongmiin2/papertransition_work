@@ -23,7 +23,7 @@ def main() -> int:
     parser.add_argument(
         "--corpus",
         type=Path,
-        default=PROJECT_ROOT / "output" / "hancom-knowledge" / "processed" / "chunks.jsonl",
+        default=PROJECT_ROOT / "output" / "datasets" / "hancom-knowledge" / "processed" / "chunks.jsonl",
     )
     parser.add_argument(
         "--capability-profile",

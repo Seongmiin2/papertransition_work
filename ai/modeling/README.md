@@ -33,10 +33,10 @@ prompt로 묶고 HwpDocumentPlan 응답을 자동수정 없이 검증하지만, 
 ```powershell
 python ai/modeling/train_korean_ocr.py `
   --paddleocr-repo output/vendor/PaddleOCR `
-  --dataset output/hwp-ocr-training-v2 `
+  --dataset output/datasets/hwp-ocr-training-v2 `
   --rights-manifest path/to/verified-ocr-training-rights.json `
   --rights-evidence-root path/to/verified-evidence-root `
-  --output output/trained-korean-ocr-<run-id> `
+  --output output/training/trained-korean-ocr-<run-id> `
   --epochs 6 --batch-size 32 --learning-rate 0.00002 --warmup-epochs 1
 ```
 

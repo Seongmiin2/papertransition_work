@@ -54,7 +54,7 @@ def main() -> int:
         description="Build real Korean exam OCR line data from Hancom-rendered HWP files"
     )
     parser.add_argument("--input", type=Path, action="append", dest="inputs")
-    parser.add_argument("--output", type=Path, default=Path("output/hwp-ocr-training"))
+    parser.add_argument("--output", type=Path, default=Path("output/datasets/hwp-ocr-training"))
     parser.add_argument("--dpi", type=int, default=300)
     parser.add_argument("--max-text-length", type=int, default=60)
     parser.add_argument("--seed", type=int, default=20260826)

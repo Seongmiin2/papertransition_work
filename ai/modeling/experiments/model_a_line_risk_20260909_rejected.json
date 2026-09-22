@@ -52,7 +52,7 @@
     "training_rights_manifest_missing"
   ],
   "artifact": {
-    "local_directory": "output/trained-model-a-line-risk-20260909-oof-e40",
+    "local_directory": "output/training/trained-model-a-line-risk-20260909-oof-e40",
     "weights": "model.pdparams",
     "weights_sha256": "5211f8e5ecd26a4352926a96721e96d7d0cad316ba7c839037dd1e3c4a7ba7db"
   }

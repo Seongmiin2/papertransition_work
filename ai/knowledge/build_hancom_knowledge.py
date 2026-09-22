@@ -23,12 +23,12 @@ def main() -> int:
     parser.add_argument(
         "--raw-dir",
         type=Path,
-        default=PROJECT_ROOT / "output" / "hancom-knowledge" / "raw",
+        default=PROJECT_ROOT / "output" / "datasets" / "hancom-knowledge" / "raw",
     )
     parser.add_argument(
         "--out",
         type=Path,
-        default=PROJECT_ROOT / "output" / "hancom-knowledge" / "processed",
+        default=PROJECT_ROOT / "output" / "datasets" / "hancom-knowledge" / "processed",
     )
     parser.add_argument("--max-chars", type=int, default=1600)
     parser.add_argument("--overlap", type=int, default=160)

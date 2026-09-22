@@ -11,10 +11,10 @@ OCR recognizer 또는 Model B로 표시하면 안 된다.
 
 ```powershell
 python ai/datasets/build_model_a_line_risk_dataset.py `
-  --dataset output/hwp-ocr-training-v2 `
+  --dataset output/datasets/hwp-ocr-training-v2 `
   --rights-manifest path/to/verified-ocr-training-rights.json `
   --model ai/production/deployed/korean-exam-ppocrv5 `
-  --out output/model-a-line-risk-dataset-<run-id> `
+  --out output/datasets/model-a-line-risk-dataset-<run-id> `
   --device gpu:0 `
   --batch-size 32
 ```
@@ -25,11 +25,11 @@ python ai/datasets/build_model_a_line_risk_dataset.py `
 
 ```powershell
 python ai/modeling/train_model_a_line_risk.py `
-  --dataset output/model-a-line-risk-dataset-<run-id> `
-  --source-dataset output/hwp-ocr-training-v2 `
-  --character-dict output/hwp-ocr-training-v2/korean_exam_dict.txt `
+  --dataset output/datasets/model-a-line-risk-dataset-<run-id> `
+  --source-dataset output/datasets/hwp-ocr-training-v2 `
+  --character-dict output/datasets/hwp-ocr-training-v2/korean_exam_dict.txt `
   --rights-manifest path/to/verified-ocr-training-rights.json `
-  --out output/trained-model-a-line-risk-<run-id> `
+  --out output/training/trained-model-a-line-risk-<run-id> `
   --train-split validation `
   --validation-split test `
   --upstream-training-split train `
