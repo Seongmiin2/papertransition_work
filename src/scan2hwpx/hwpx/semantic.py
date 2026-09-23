@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw
 
 from scan2hwpx.ir.models import Document, RegionPlacement
 from scan2hwpx.preprocess import preprocess_for_ocr
-from scan2hwpx.vision.layout_dataset import TableGrid, detect_table_grids
+from scan2hwpx.vision.layout_dataset import TableGrid, detect_table_grids, ruled_line_masks_array
 
 from .fidelity import HC, HP, OPF, render_fidelity_hwpx
 from .render import MIMETYPE
@@ -37,6 +37,8 @@ FLOW_LINE_PITCH = 1080
 TEXT_BOX_MARGIN_X = 120
 TEXT_BOX_MARGIN_Y = 80
 TABLE_CELL_MARGIN = 141
+BORDER_COVERAGE = 0.8  # of a side, before it counts as a printed border
+BORDER_GAP = 10  # pixels a crossing rule or a scan speck may break a border for
 # Hancom 2024 advances the template's body font by about 0.82 em per character
 # of Korean exam text including spaces (measured from its PDF output at 8 pt).
 HANCOM_ADVANCE_PER_EM = 0.82
@@ -85,6 +87,7 @@ class _PageRegions:
     images: list[_ImageRegion]
     table_seeds: list[_ImageRegion]
     passages: list[_ImageRegion]
+    outlines: list[_ImageRegion]  # the passages whose border is printed on the page
     grids: list[TableGrid]  # ruled tables rebuilt as editable tables
     tables: list[_ImageRegion]  # their areas, whose text lives in the table cells
 
@@ -174,7 +177,7 @@ def render_semantic_hwpx(
             editable_tables += 1
         passage_groups = _passage_groups(
             ir_page.blocks,
-            regions.passages,
+            regions.outlines,
             scaled_images,
             regions.table_seeds,
             regions.tables,
@@ -267,7 +270,8 @@ def render_semantic_hwpx(
 
 def _page_regions(page_path: Path, ir_page: Any, layout_page: dict[str, Any]) -> _PageRegions:
     with Image.open(page_path) as opened:
-        width, height = (float(value) for value in opened.size)
+        rgb = np.asarray(opened.convert("RGB"), dtype=np.uint8)
+    height, width = (float(value) for value in rgb.shape[:2])
 
     def scaled(placement: RegionPlacement, fallback: Any) -> list[_ImageRegion]:
         source = _ir_regions(ir_page, placement, width, height)
@@ -293,13 +297,75 @@ def _page_regions(page_path: Path, ir_page: Any, layout_page: dict[str, Any]) ->
         aligned = _align_grid_to_seed(grid, seeds)
         if not any(_intersection_ratio(aligned.bbox, image.bbox) >= 0.45 for image in images):
             grids.append(aligned)
+    horizontal, vertical = ruled_line_masks_array(rgb)
+    borders = (_printed_border(horizontal, vertical, region.bbox) for region in passages)
     return _PageRegions(
         images=images,
         table_seeds=table_seeds,
         passages=passages,
+        outlines=[_ImageRegion(border, width, height) for border in borders if border is not None],
         grids=grids,
         tables=[_ImageRegion(grid.bbox, width, height) for grid in grids],
     )
+
+
+def _printed_border(
+    horizontal: Any, vertical: Any, bbox: tuple[float, float, float, float]
+) -> tuple[float, float, float, float] | None:
+    """The box printed around bbox, snapped to its rules, or None if there is none.
+
+    The ruled detector returns the bounding box of a group of lines, so on a scan
+    an underline and the column rule together already look like a box. Only a
+    region ruled on all four sides, by lines that stop at its own corners, is one.
+    """
+    sides = {
+        name: _border_line(horizontal if name in ("top", "bottom") else vertical, bbox, name)
+        for name in ("top", "bottom", "left", "right")
+    }
+    if any(covered < BORDER_COVERAGE for _, covered, _ in sides.values()):
+        return None
+    # The page frame and the column rule run past the region; a border stops at it.
+    overshoot_limit = max(12.0, (bbox[2] - bbox[0]) * 0.08)
+    if any(sides[name][2] > overshoot_limit for name in ("top", "bottom")):
+        return None
+    return (sides["left"][0], sides["top"][0], sides["right"][0], sides["bottom"][0])
+
+
+def _border_line(
+    mask: Any, bbox: tuple[float, float, float, float], side: str
+) -> tuple[float, float, float]:
+    """Position, covered fraction and overshoot of the best rule along one side."""
+    x0, y0, x1, y1 = (round(value) for value in bbox)
+    horizontal = side in ("top", "bottom")
+    start, end = (x0, x1) if horizontal else (y0, y1)
+    center = {"top": y0, "bottom": y1, "left": x0, "right": x1}[side]
+    if end - start < 2:
+        return (float(center), 0.0, 0.0)
+    slack = max(4, round((end - start) * 0.012))  # a scan tilts a long rule off its row
+    search = max(6, round((end - start) * 0.02))  # the detected region may miss its border
+    best = (float(center), 0.0, 0.0)
+    for position in range(center - search, center + search + 1):
+        low = max(0, position - slack)
+        band = (
+            mask[low : position + slack + 1, :]
+            if horizontal
+            else mask[:, low : position + slack + 1]
+        )
+        covered = band.max(axis=0 if horizontal else 1) > 0
+        fraction = float(covered[start:end].mean())
+        if fraction > best[1]:
+            best = (float(position), fraction, _border_overshoot(covered, start, end))
+    return best
+
+
+def _border_overshoot(covered: Any, start: int, end: int) -> float:
+    """How far the run of ruled pixels along a side reaches past the region."""
+    before, after = start, end
+    while before > 0 and covered[max(0, before - BORDER_GAP) : before].any():
+        before = max(0, before - BORDER_GAP)
+    while after < len(covered) and covered[after : after + BORDER_GAP].any():
+        after = min(len(covered), after + BORDER_GAP)
+    return float(max(start - before, after - end))
 
 
 def _grid_cuts_text(grid: TableGrid, blocks: list[Any]) -> bool:

@@ -128,7 +128,9 @@ def test_editable_renderer_groups_passage_lines_in_one_continuous_edit_area(
     tmp_path: Path,
 ) -> None:
     image_path = tmp_path / "page-1.png"
-    Image.new("RGB", (1000, 1400), "white").save(image_path)
+    image = Image.new("RGB", (1000, 1400), "white")
+    ImageDraw.Draw(image).rectangle((100, 200, 450, 500), outline="black", width=4)
+    image.save(image_path)
     document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
     page = document.pages[0]
     page.width = 1000
@@ -214,7 +216,9 @@ def test_editable_renderer_groups_passage_lines_in_one_continuous_edit_area(
 
 def test_editable_renderer_rejects_cross_column_passage_outline(tmp_path: Path) -> None:
     image_path = tmp_path / "page-1.png"
-    Image.new("RGB", (1000, 1400), "white").save(image_path)
+    image = Image.new("RGB", (1000, 1400), "white")
+    ImageDraw.Draw(image).rectangle((50, 200, 950, 900), outline="black", width=4)
+    image.save(image_path)
     document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
     page = document.pages[0]
     page.blocks[0].bbox = BBox(pixel=(100, 60, 900, 110), normalized=(0.1, 0.043, 0.9, 0.079))
@@ -264,6 +268,60 @@ def test_editable_renderer_rejects_cross_column_passage_outline(tmp_path: Path) 
     # The same box on a one-column page spans its text width, not two columns.
     page.columns = page.columns[:1]
     assert outlines("one-column.hwpx") == 1
+
+
+def test_editable_renderer_draws_no_outline_where_the_page_prints_no_box(
+    tmp_path: Path,
+) -> None:
+    """An underline and the column rule bound a region, but they are not a box."""
+    image_path = tmp_path / "page-1.png"
+    image = Image.new("RGB", (1000, 1400), "white")
+    draw = ImageDraw.Draw(image)
+    draw.line((500, 0, 500, 1400), fill="black", width=4)  # the column rule
+    draw.line((100, 200, 450, 200), fill="black", width=4)  # a line underscored by hand
+    image.save(image_path)
+    document = FixtureOcrProvider().convert(Path("tests/fixtures/ocr_page_1.json"))
+    page = document.pages[0]
+    page.width = 1000
+    page.height = 1400
+    page.blocks[0].bbox = BBox(pixel=(100, 60, 900, 110), normalized=(0.1, 0.043, 0.9, 0.079))
+    page.blocks[1].text = "작품의 첫 번째 본문 줄"
+    page.blocks[1].bbox = BBox(pixel=(130, 275, 420, 310), normalized=(0.13, 0.196, 0.42, 0.221))
+    layout_seed = tmp_path / "layout_seed.json"
+    layout_seed.write_text(
+        json.dumps(
+            {
+                "pages": [
+                    {
+                        "page_no": 1,
+                        "width": 1000,
+                        "height": 1400,
+                        "annotations": [
+                            {
+                                "label": "passage_box",
+                                "confidence": 0.5,
+                                "source": "opencv_ruled_region",
+                                "bbox": [100, 200, 500, 1000],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "no-box.hwpx"
+
+    render_semantic_hwpx(
+        [image_path], document, layout_seed, output, include_page_backgrounds=False
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        section = etree.fromstring(archive.read("Contents/section0.xml"))
+    assert not section.xpath(
+        "//*[local-name()='rect'][./*[local-name()='lineShape'][@style='SOLID']]"
+    )
+    assert "작품의 첫 번째 본문 줄" in section.xpath("string()")
 
 
 def _line(text: str, x0: float, y0: float, x1: float, *, height: float = 26.0) -> SimpleNamespace:
